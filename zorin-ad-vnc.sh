@@ -29,6 +29,10 @@ source "$LIB_DIR/vnc_manager.sh"
 source "$LIB_DIR/health_check.sh"
 # shellcheck source=lib/backup_rollback.sh
 source "$LIB_DIR/backup_rollback.sh"
+# shellcheck source=lib/smb_share.sh
+source "$LIB_DIR/smb_share.sh"
+# shellcheck source=lib/printer_manager.sh
+source "$LIB_DIR/printer_manager.sh"
 
 show_system_info() {
     msg_step "THÔNG TIN HỆ THỐNG (SYSTEM INFORMATION)"
@@ -230,11 +234,13 @@ main_menu() {
         echo -e " ${C_GREEN}15.${C_RESET} Backup / Rollback Config        (Sao lưu & Khôi phục cấu hình)"
         echo -e " ${C_CYAN}16.${C_RESET} Automated Quick Setup           ${C_BOLD}(Chạy tuần tự toàn bộ cho máy mới)${C_RESET}"
         echo -e " ${C_RED}17.${C_RESET} Leave Active Directory          (Rời khỏi miền AD)"
+        echo -e " ${C_GREEN}18.${C_RESET} Network File Share (SMB/CIFS)  (Quản lý thư mục chia sẻ Windows/AD)"
+        echo -e " ${C_GREEN}19.${C_RESET} Network Printer Manager        (Quản lý máy in CUPS/SMB/IP)"
         echo -e " ${C_BOLD}0.${C_RESET}  Exit                            (Thoát công cụ)"
         echo -e "${C_BLUE}----------------------------------------------------------------${C_RESET}"
 
         local choice
-        prompt_with_default "Nhập lựa chọn của bạn [0-17]" "13" choice
+        prompt_with_default "Nhập lựa chọn của bạn [0-19]" "13" choice
 
         case "$choice" in
             1)  show_system_info; press_enter_to_continue ;;
@@ -272,6 +278,8 @@ main_menu() {
                 ;;
             16) automated_quick_setup; press_enter_to_continue ;;
             17) leave_active_directory; press_enter_to_continue ;;
+            18) smb_file_share_menu; press_enter_to_continue ;;
+            19) printer_manager_menu; press_enter_to_continue ;;
             0)
                 echo -e "\n${C_CYAN}Cảm ơn bạn đã sử dụng Zorin AD & X11VNC Management Tool! Tạm biệt.${C_RESET}"
                 exit 0
@@ -295,6 +303,8 @@ show_help() {
     echo "  --auto-setup          Chạy toàn bộ quy trình thiết lập tự động"
     echo "  --repair [username]   Sửa lỗi quyền Home Directory cho user"
     echo "  --toggle-gpo          Chuyển đổi chế độ AD GPO Enforcing / Permissive"
+    echo "  --share               Mở menu quản lý Thư mục chia sẻ mạng (SMB/CIFS)"
+    echo "  --printer             Mở menu quản lý Máy in chia sẻ qua mạng"
     echo "  --help, -h            Hiển thị trợ giúp này"
     echo ""
 }
@@ -326,6 +336,14 @@ else
         --toggle-gpo)
             check_root
             toggle_gpo_mode
+            ;;
+        --share)
+            check_root
+            smb_file_share_menu
+            ;;
+        --printer)
+            check_root
+            printer_manager_menu
             ;;
         --help|-h)
             show_help

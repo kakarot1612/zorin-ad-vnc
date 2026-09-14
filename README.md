@@ -26,6 +26,14 @@ Bộ công cụ quản trị hệ thống toàn diện dành cho **Zorin OS (Ubu
    - Kiểm tra trực quan 14 tiêu chí: DNS, Kerberos, LDAP, Realm, SSSD, PAM, Home Dir, GDM, Xorg, x11vnc và Port 5900.
 7. **Sao lưu & Khôi phục (Backup & Rollback)**:
    - Tự động tạo bản sao lưu có gắn mốc thời gian trước khi thay đổi bất kỳ file cấu hình nào trong `/etc`.
+8. **Quản lý Thư mục chia sẻ mạng (Windows SMB/CIFS File Share)**:
+   - Tra cứu share trên Windows File Server (`smbclient -L`).
+   - Mount thư mục mạng với xác thực Domain AD (lưu credentials 0600) hoặc Kerberos SSO.
+   - Tùy chọn tự động mount khi khởi động máy qua `/etc/fstab`.
+9. **Quản lý Máy in chia sẻ qua mạng (Network Printer CUPS/SMB/IP)**:
+   - Thêm máy in mạng trực tiếp theo IP qua RAW Socket Port 9100 hoặc IPP 631 (Canon, HP, Ricoh, Brother,...).
+   - Thêm máy in từ Windows Print Server trong Domain qua SMB (`smb://server/printer`).
+   - In trang thử nghiệm (Print Test Page) và đặt máy in mặc định.
 
 ---
 
@@ -104,6 +112,8 @@ Khi khởi chạy, công cụ hiển thị Menu trực quan:
  15. Backup / Rollback Config        (Sao lưu & Khôi phục cấu hình)
  16. Automated Quick Setup           (Chạy tuần tự toàn bộ cho máy mới)
  17. Leave Active Directory          (Rời khỏi miền AD)
+ 18. Network File Share (SMB/CIFS)   (Quản lý thư mục chia sẻ Windows/AD)
+ 19. Network Printer Manager         (Quản lý máy in CUPS/SMB/IP)
  0.  Exit                            (Thoát công cụ)
 ----------------------------------------------------------------
 ```
@@ -143,6 +153,8 @@ Ngoài menu tương tác, bạn có thể gọi trực tiếp các tính năng b
 | `sudo zorin-ad-vnc --auto-setup` | Chạy chế độ cài đặt tự động cho máy mới |
 | `sudo zorin-ad-vnc --repair vnit024` | Sửa quyền sở hữu thư mục Home cho user `vnit024` |
 | `sudo zorin-ad-vnc --toggle-gpo` | Chuyển đổi qua lại giữa GPO Enforcing và Permissive |
+| `sudo zorin-ad-vnc --share` | Mở menu quản lý Thư mục chia sẻ mạng (SMB/CIFS) |
+| `sudo zorin-ad-vnc --printer` | Mở menu quản lý Máy in chia sẻ qua mạng |
 | `sudo zorin-ad-vnc --help` | Hiển thị hướng dẫn sử dụng các tham số |
 
 ---
@@ -215,7 +227,9 @@ ZorinOS-tool/
 │   ├── vnc_manager.sh            # Cài đặt x11vnc, đặt mật khẩu VNC an toàn, quản trị service
 │   ├── x11vnc_session_daemon.sh  # Engine nhận diện dynamic GUI user trên seat0 & attach x11vnc
 │   ├── health_check.sh           # Bảng kiểm tra toàn diện 14 tiêu chí (Dashboard OK/FAILED)
-│   └── backup_rollback.sh        # Tự động backup cấu hình và tính năng khôi phục (Rollback)
+│   ├── backup_rollback.sh        # Tự động backup cấu hình và tính năng khôi phục (Rollback)
+│   ├── smb_share.sh              # Quản lý thư mục chia sẻ mạng Windows/AD (SMB/CIFS)
+│   └── printer_manager.sh        # Quản lý máy in mạng (CUPS / RAW 9100 / IPP / SMB Print Server)
 ├── .gitignore                    # Bỏ qua log, backup tạm, mật khẩu vnc
 ├── LICENSE                       # Giấy phép MIT
 └── README.md                     # Tài liệu hướng dẫn sử dụng chi tiết
