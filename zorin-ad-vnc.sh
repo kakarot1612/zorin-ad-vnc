@@ -33,6 +33,8 @@ source "$LIB_DIR/backup_rollback.sh"
 source "$LIB_DIR/smb_share.sh"
 # shellcheck source=lib/printer_manager.sh
 source "$LIB_DIR/printer_manager.sh"
+# shellcheck source=lib/bamboo_setup.sh
+source "$LIB_DIR/bamboo_setup.sh"
 
 show_system_info() {
     msg_step "THÔNG TIN HỆ THỐNG (SYSTEM INFORMATION)"
@@ -189,13 +191,17 @@ automated_quick_setup() {
     configure_gdm_xorg
 
     # Step 5: Install & Configure x11vnc
-    msg_step "[BƯỚC 5/6] THIẾT LẬP X11VNC & MẬT KHẨU KẾT NỐI"
+    msg_step "[BƯỚC 5/7] THIẾT LẬP X11VNC & MẬT KHẨU KẾT NỐI"
     install_x11vnc
     setup_vnc_password
     install_vnc_systemd_service
 
-    # Step 6: Health check
-    msg_step "[BƯỚC 6/6] KIỂM TRA TOÀN DIỆN HỆ THỐNG"
+    # Step 6: Install & Configure Bamboo Vietnamese Input Method
+    msg_step "[BƯỚC 6/7] CÀI ĐẶT BỘ GÕ TIẾNG VIỆT BAMBOO TOÀN HỆ THỐNG"
+    setup_bamboo_system_wide
+
+    # Step 7: Health check
+    msg_step "[BƯỚC 7/7] KIỂM TRA TOÀN DIỆN HỆ THỐNG"
     run_health_check
 
     msg_ok "========================================================="
@@ -236,11 +242,12 @@ main_menu() {
         echo -e " ${C_RED}17.${C_RESET} Leave Active Directory          (Rời khỏi miền AD)"
         echo -e " ${C_GREEN}18.${C_RESET} Network File Share (SMB/CIFS)  (Quản lý thư mục chia sẻ Windows/AD)"
         echo -e " ${C_GREEN}19.${C_RESET} Network Printer Manager        (Quản lý máy in CUPS/SMB/IP)"
+        echo -e " ${C_GREEN}20.${C_RESET} Bamboo Vietnamese Input Setup   (Bộ gõ tiếng Việt tự động cho MỌI user)"
         echo -e " ${C_BOLD}0.${C_RESET}  Exit                            (Thoát công cụ)"
         echo -e "${C_BLUE}----------------------------------------------------------------${C_RESET}"
 
         local choice
-        prompt_with_default "Nhập lựa chọn của bạn [0-19]" "13" choice
+        prompt_with_default "Nhập lựa chọn của bạn [0-20]" "13" choice
 
         case "$choice" in
             1)  show_system_info; press_enter_to_continue ;;
@@ -280,6 +287,7 @@ main_menu() {
             17) leave_active_directory; press_enter_to_continue ;;
             18) smb_file_share_menu; press_enter_to_continue ;;
             19) printer_manager_menu; press_enter_to_continue ;;
+            20) bamboo_management_menu; press_enter_to_continue ;;
             0)
                 echo -e "\n${C_CYAN}Cảm ơn bạn đã sử dụng Zorin AD & X11VNC Management Tool! Tạm biệt.${C_RESET}"
                 exit 0
@@ -305,6 +313,7 @@ show_help() {
     echo "  --toggle-gpo          Chuyển đổi chế độ AD GPO Enforcing / Permissive"
     echo "  --share               Mở menu quản lý Thư mục chia sẻ mạng (SMB/CIFS)"
     echo "  --printer             Mở menu quản lý Máy in chia sẻ qua mạng"
+    echo "  --bamboo              Cài đặt & Cấu hình bộ gõ tiếng Việt Bamboo toàn hệ thống"
     echo "  --help, -h            Hiển thị trợ giúp này"
     echo ""
 }
@@ -344,6 +353,10 @@ else
         --printer)
             check_root
             printer_manager_menu
+            ;;
+        --bamboo)
+            check_root
+            bamboo_management_menu
             ;;
         --help|-h)
             show_help

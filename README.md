@@ -34,6 +34,10 @@ Bộ công cụ quản trị hệ thống toàn diện dành cho **Zorin OS (Ubu
    - Thêm máy in mạng trực tiếp theo IP qua RAW Socket Port 9100 hoặc IPP 631 (Canon, HP, Ricoh, Brother,...).
    - Thêm máy in từ Windows Print Server trong Domain qua SMB (`smb://server/printer`).
    - In trang thử nghiệm (Print Test Page) và đặt máy in mặc định.
+10. **Tự động cấu hình bộ gõ Tiếng Việt Bamboo cho TOÀN BỘ AD User**:
+   - Cài đặt `ibus-bamboo` từ PPA chính thức.
+   - Thiết lập GSettings System-wide Override (`/usr/share/glib-2.0/schemas/99_zorin_bamboo.gschema.override`) và XDG Autostart toàn cục.
+   - **Bất kỳ user Active Directory nào đăng nhập vào Zorin Desktop đều tự động có sẵn bộ gõ Bamboo**, không cần phải cấu hình thủ công từng user. Phím chuyển đổi nhanh: `Super + Space`.
 
 ---
 
@@ -114,6 +118,7 @@ Khi khởi chạy, công cụ hiển thị Menu trực quan:
  17. Leave Active Directory          (Rời khỏi miền AD)
  18. Network File Share (SMB/CIFS)   (Quản lý thư mục chia sẻ Windows/AD)
  19. Network Printer Manager         (Quản lý máy in CUPS/SMB/IP)
+ 20. Bamboo Vietnamese Input Setup   (Bộ gõ tiếng Việt tự động cho MỌI user)
  0.  Exit                            (Thoát công cụ)
 ----------------------------------------------------------------
 ```
@@ -133,7 +138,8 @@ Khi khởi chạy, công cụ hiển thị Menu trực quan:
 7. **Ép dùng Xorg**: Tắt Wayland trong `/etc/gdm3/custom.conf`.
 8. **Đặt mật khẩu VNC**: Nhập mật khẩu VNC (tối đa 8 ký tự theo chuẩn RFB).
 9. **Kích hoạt Daemon**: Bật `zorin-x11vnc.service`.
-10. **Reboot**: Khởi động lại máy để áp dụng Xorg.
+10. **Cài đặt bộ gõ Bamboo**: Tự động cài và kích hoạt bộ gõ tiếng Việt cho mọi AD user.
+11. **Reboot**: Khởi động lại máy để áp dụng Xorg và hoàn tất.
 
 Sau khi Reboot, bất kỳ AD user nào (ví dụ: `vnit024`) đăng nhập vào Zorin GUI:
 - Màn hình desktop Xorg sẽ khởi chạy.
@@ -155,6 +161,7 @@ Ngoài menu tương tác, bạn có thể gọi trực tiếp các tính năng b
 | `sudo zorin-ad-vnc --toggle-gpo` | Chuyển đổi qua lại giữa GPO Enforcing và Permissive |
 | `sudo zorin-ad-vnc --share` | Mở menu quản lý Thư mục chia sẻ mạng (SMB/CIFS) |
 | `sudo zorin-ad-vnc --printer` | Mở menu quản lý Máy in chia sẻ qua mạng |
+| `sudo zorin-ad-vnc --bamboo` | Cài đặt & Cấu hình bộ gõ tiếng Việt Bamboo cho toàn bộ AD user |
 | `sudo zorin-ad-vnc --help` | Hiển thị hướng dẫn sử dụng các tham số |
 
 ---
@@ -229,7 +236,8 @@ ZorinOS-tool/
 │   ├── health_check.sh           # Bảng kiểm tra toàn diện 14 tiêu chí (Dashboard OK/FAILED)
 │   ├── backup_rollback.sh        # Tự động backup cấu hình và tính năng khôi phục (Rollback)
 │   ├── smb_share.sh              # Quản lý thư mục chia sẻ mạng Windows/AD (SMB/CIFS)
-│   └── printer_manager.sh        # Quản lý máy in mạng (CUPS / RAW 9100 / IPP / SMB Print Server)
+│   ├── printer_manager.sh        # Quản lý máy in mạng (CUPS / RAW 9100 / IPP / SMB Print Server)
+│   └── bamboo_setup.sh           # Cài đặt & cấu hình bộ gõ tiếng Việt Bamboo cho MỌI AD user
 ├── .gitignore                    # Bỏ qua log, backup tạm, mật khẩu vnc
 ├── LICENSE                       # Giấy phép MIT
 └── README.md                     # Tài liệu hướng dẫn sử dụng chi tiết
