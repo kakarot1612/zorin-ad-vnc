@@ -1,0 +1,19 @@
+# Logs
+*.log
+/var/log/zorin-ad-vnc.log
+/var/log/zorin-x11vnc.log
+
+# Passwords & Credentials
+/etc/x11vnc/vncpwd
+*.pwd
+*.keytab
+
+# Backups
+/var/backups/zorin-ad-vnc/
+*.bak
+*.orig
+
+# OS generated
+.DS_Store
+Thumbs.db
+*~

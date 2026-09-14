@@ -1,0 +1,17 @@
+[Unit]
+Description=Zorin OS Dynamic X11VNC Session Daemon
+Documentation=https://github.com/vnit/zorin-ad-vnc
+After=network.target gdm.service sssd.service
+Wants=gdm.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/zorin-x11vnc-daemon.sh
+Restart=always
+RestartSec=5
+KillMode=process
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
