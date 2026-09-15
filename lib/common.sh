@@ -234,5 +234,28 @@ get_ad_workgroup() {
     echo "${wg^^}"
 }
 
+# URL encode string (RFC 3986)
+urlencode() {
+    local string="$1"
+    if python3 -c "import urllib.parse" >/dev/null 2>&1; then
+        python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$string"
+    elif python -c "import urllib.parse" >/dev/null 2>&1; then
+        python -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$string"
+    else
+        local strlen=${#string}
+        local encoded=""
+        local pos c o
+        for (( pos=0 ; pos<strlen ; pos++ )); do
+            c="${string:$pos:1}"
+            case "$c" in
+                [-_.~a-zA-Z0-9] ) o="${c}" ;;
+                * ) printf -v o '%%%02X' "'$c" ;;
+            esac
+            encoded+="${o}"
+        done
+        echo "${encoded}"
+    fi
+}
+
 # Initialize logging on load
 init_logging

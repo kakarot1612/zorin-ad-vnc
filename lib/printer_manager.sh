@@ -329,7 +329,7 @@ add_windows_shared_printer() {
 
     local smb_uri=""
     local url_share_name
-    url_share_name=$(echo "$share_printer_name" | sed 's/ /%20/g')
+    url_share_name=$(urlencode "$share_printer_name")
 
     if [[ "$auth_choice" == "2" ]]; then
         smb_uri="smb://${print_server}/${url_share_name}"
@@ -351,10 +351,20 @@ add_windows_shared_printer() {
 
         local clean_user="${ad_user%@*}"
         local clean_dom="${ad_user#*@}"
-        local url_user
-        url_user=$(echo -n "${clean_dom}\\${clean_user}" | sed 's/\\/%5C/g')
-        smb_uri="smb://${url_user}:${ad_pass}@${print_server}/${url_share_name}"
-        unset ad_pass
+        local workgroup
+        workgroup=$(get_ad_workgroup "$clean_dom")
+
+        local enc_workgroup enc_user enc_pass
+        enc_workgroup=$(urlencode "$workgroup")
+        enc_user=$(urlencode "$clean_user")
+        enc_pass=$(urlencode "$ad_pass")
+
+        if [[ -n "$enc_workgroup" ]]; then
+            smb_uri="smb://${enc_workgroup}%5C${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
+        else
+            smb_uri="smb://${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
+        fi
+        unset ad_pass enc_pass
     fi
 
     # Driver Selection
