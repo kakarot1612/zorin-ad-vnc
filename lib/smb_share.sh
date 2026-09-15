@@ -44,7 +44,7 @@ list_smb_shares_on_server() {
     msg_step "TRA CỨU DANH SÁCH THƯ MỤC CHIA SẺ TRÊN SERVER (SMB BROWSE)"
 
     local server_host
-    prompt_with_default "Nhập IP hoặc Hostname của File Server (VD: 10.0.60.15 hoặc fileserver)" "" server_host
+    prompt_with_default "Nhập IP hoặc Hostname của File Server" "10.0.60.30" server_host
 
     if [[ -z "$server_host" ]]; then
         msg_err "Địa chỉ server không được để trống."
@@ -88,7 +88,7 @@ mount_smb_share() {
     install_smb_dependencies || return 1
 
     local server_host
-    prompt_with_default "Nhập IP hoặc Hostname của File Server (VD: 10.0.60.15)" "" server_host
+    prompt_with_default "Nhập IP hoặc Hostname của File Server" "10.0.60.30" server_host
     local share_name
     prompt_with_default "Nhập Tên Thư Mục Chia Sẻ (Share Name, VD: Data, Documents)" "" share_name
 
