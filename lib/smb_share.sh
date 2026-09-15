@@ -63,42 +63,87 @@ list_smb_shares_on_server() {
     local auth_choice
     prompt_with_default "Chọn phương thức xác thực [1-2]" "1" auth_choice
 
+    # 1. Probe Server Domain / OS information
+    echo ""
+    msg_info "Đang thăm dò thông tin máy chủ ${server_host}..."
+    local probe_info
+    probe_info=$(smbclient -N -L "$server_host" --option="client min protocol=SMB2" 2>&1 || true)
+    local srv_domain srv_os
+    srv_domain=$(echo "$probe_info" | grep -o -E 'Domain=\[[^]]+\]' | head -n 1 | cut -d'[' -f2 | cut -d']' -f1)
+    srv_os=$(echo "$probe_info" | grep -o -E 'OS=\[[^]]+\]' | head -n 1 | cut -d'[' -f2 | cut -d']' -f1)
+
+    if [[ -n "$srv_domain" ]]; then
+        echo -e "   Phát hiện Server Domain / Workgroup: ${C_GREEN}${srv_domain}${C_RESET}"
+    fi
+    if [[ -n "$srv_os" ]]; then
+        echo -e "   Hệ điều hành Server                 : ${C_CYAN}${srv_os}${C_RESET}"
+    fi
+
     if [[ "$auth_choice" == "2" ]]; then
         msg_info "Đang tra cứu danh sách share từ ${server_host} với quyền Guest..."
-        smbclient -N -L "$server_host" 2>&1 || true
+        echo "$probe_info"
     else
         echo ""
         local raw_user
-        prompt_with_default "Tài khoản AD (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_user
+        prompt_with_default "Tài khoản (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_user
         local clean_user clean_domain
         normalize_ad_user_and_domain "$raw_user" "$domain" clean_user clean_domain
 
         local workgroup
         workgroup=$(get_ad_workgroup "$clean_domain")
+        # If server reported a specific domain, consider it
+        local target_wg="${srv_domain:-$workgroup}"
 
         local ad_pass=""
-        prompt_secure_password "Mật khẩu cho tài khoản AD [${clean_user}@${clean_domain}]" ad_pass false
+        prompt_secure_password "Mật khẩu cho [${clean_user}]" ad_pass false
 
         echo ""
-        msg_info "Đang tra cứu danh sách share từ ${server_host} với tài khoản [${clean_user}@${clean_domain}]..."
+        msg_info "Đang kết nối tới ${server_host}..."
 
-        local smb_out smb_code=0
-        # 1. Try with UPN (tom@bestpacific.com)
-        smb_out=$(smbclient -L "$server_host" -U "${clean_user}@${clean_domain}%${ad_pass}" --option="client min protocol=SMB2" 2>&1) || smb_code=$?
+        # Define candidate authentication strategies in order
+        local auth_attempts=(
+            "-W ${target_wg} -U ${clean_user}"
+            "-U ${clean_user}@${clean_domain}"
+            "-W ${workgroup} -U ${clean_user}"
+            "-U ${clean_user}"
+            "-W WORKGROUP -U ${clean_user}"
+        )
 
-        # 2. If UPN failed with logon failure, fallback to NetBIOS workgroup (BESTPACIFIC\tom)
-        if [[ $smb_code -ne 0 ]] && [[ "$smb_out" == *"NT_STATUS_LOGON_FAILURE"* ]]; then
-            msg_info "Thử lại xác thực với NetBIOS Domain [${workgroup}\\${clean_user}]..."
-            smb_out=$(smbclient -L "$server_host" -U "${clean_user}%${ad_pass}" -W "${workgroup}" --option="client min protocol=SMB2" 2>&1) || smb_code=$?
-        fi
+        local smb_out="" smb_success=false
+        for strat in "${auth_attempts[@]}"; do
+            # Pipe password safely to stdin to prevent character escaping issues
+            # shellcheck disable=SC2086
+            smb_out=$(printf "%s\n" "$ad_pass" | smbclient -L "$server_host" $strat --option="client min protocol=SMB2" 2>&1)
+            local exit_code=$?
 
-        # 3. If still failed, try NetBIOS backslash format
-        if [[ $smb_code -ne 0 ]] && [[ "$smb_out" == *"NT_STATUS_LOGON_FAILURE"* ]]; then
-            smb_out=$(smbclient -L "$server_host" -U "${workgroup}\\${clean_user}%${ad_pass}" --option="client min protocol=SMB2" 2>&1) || smb_code=$?
-        fi
+            if [[ $exit_code -eq 0 ]] && [[ "$smb_out" =~ "Sharename" ]]; then
+                smb_success=true
+                msg_ok "Xác thực thành công với chế độ: ${strat}!"
+                break
+            fi
 
-        echo "$smb_out"
+            # If not a logon failure (e.g. access denied to IPC$ or network issue), break early
+            if [[ "$smb_out" != *"NT_STATUS_LOGON_FAILURE"* ]] && [[ "$smb_out" != *"NT_STATUS_UNSUCCESSFUL"* ]] && [[ $exit_code -eq 0 ]]; then
+                smb_success=true
+                break
+            fi
+        done
+
         unset ad_pass
+
+        echo "--------------------------------------------------------"
+        echo "$smb_out"
+        echo "--------------------------------------------------------"
+
+        if [[ "$smb_success" == "true" ]]; then
+            msg_ok "Tra cứu danh sách thư mục chia sẻ thành công!"
+        else
+            msg_err "Xác thực không thành công (NT_STATUS_LOGON_FAILURE)."
+            echo -e "${C_YELLOW}Gợi ý kiểm tra:${C_RESET}"
+            echo -e "  1. Kiểm tra lại mật khẩu (chú ý phím Caps Lock / bộ gõ tiếng Việt)."
+            echo -e "  2. Tài khoản ${clean_user} trên server 10.0.60.30 là tài khoản Domain hay tài khoản Local của riêng máy đó?"
+            echo -e "  3. Kiểm tra xem tài khoản có bị khóa (Account locked) hoặc hết hạn trên AD không."
+        fi
     fi
 }
 
