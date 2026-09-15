@@ -373,6 +373,9 @@ Categories=Network;FileTransfer;
 EOF
             chmod +x "$shortcut_file"
             chown "${user_uid}:${user_gid}" "$shortcut_file"
+            # Mark desktop file as trusted so GNOME doesn't prompt Untrusted Desktop File
+            sudo -u "$target_user" gio set "$shortcut_file" metadata::trusted true 2>/dev/null || true
+            gio set "$shortcut_file" metadata::trusted true 2>/dev/null || true
             msg_ok "Đã tạo lối tắt trên màn hình Desktop của [${target_user}]: ${shortcut_file}"
         fi
     done
