@@ -332,28 +332,111 @@ unmount_smb_share() {
     fi
 }
 
+create_desktop_share_shortcut() {
+    check_root
+    msg_step "TẠO LỐI TẮT TRUY CẬP NHANH (SINGLE SIGN-ON - KHÔNG CẦN NHẬP MẬT KHẨU)"
+
+    install_smb_dependencies || return 1
+
+    local server_host
+    prompt_with_default "Nhập IP hoặc Hostname của File Server" "10.0.60.30" server_host
+
+    local share_name
+    prompt_with_default "Nhập Tên Thư Mục Chia Sẻ" "BPVN-Fileserver" share_name
+
+    local smb_url="smb://${server_host}/${share_name}"
+
+    # Target user info
+    local target_user="${SUDO_USER:-$USER}"
+    local user_home
+    user_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)
+    user_home="${user_home:-/home/$target_user}"
+
+    local user_uid user_gid
+    user_uid=$(id -u "$target_user" 2>/dev/null || echo "1000")
+    user_gid=$(id -g "$target_user" 2>/dev/null || echo "1000")
+
+    # 1. Create Desktop shortcut for current user
+    for d_dir in "${user_home}/Desktop" "${user_home}/Bàn làm việc"; do
+        if [[ -d "$d_dir" ]]; then
+            local shortcut_file="${d_dir}/${share_name}.desktop"
+            cat > "$shortcut_file" <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=${share_name}
+Comment=Thư mục chia sẻ ${smb_url}
+Exec=nautilus ${smb_url}
+Icon=folder-remote
+Terminal=false
+Categories=Network;FileTransfer;
+EOF
+            chmod +x "$shortcut_file"
+            chown "${user_uid}:${user_gid}" "$shortcut_file"
+            msg_ok "Đã tạo lối tắt trên màn hình Desktop của [${target_user}]: ${shortcut_file}"
+        fi
+    done
+
+    # 2. Add bookmark to Nautilus sidebar for current user
+    local gtk_bookmarks="${user_home}/.config/gtk-3.0/bookmarks"
+    mkdir -p "$(dirname "$gtk_bookmarks")"
+    if ! grep -q "$smb_url" "$gtk_bookmarks" 2>/dev/null; then
+        echo "${smb_url} ${share_name}" >> "$gtk_bookmarks"
+        chown -R "${user_uid}:${user_gid}" "${user_home}/.config/gtk-3.0"
+        msg_ok "Đã thêm thư mục [${share_name}] vào thanh bên (Sidebar) của Files (Nautilus)!"
+    fi
+
+    # 3. Synchronize to /etc/skel so ALL future AD users get this shortcut automatically
+    mkdir -p /etc/skel/Desktop /etc/skel/.config/gtk-3.0
+    cat > "/etc/skel/Desktop/${share_name}.desktop" <<EOF
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=${share_name}
+Comment=Thư mục chia sẻ ${smb_url}
+Exec=nautilus ${smb_url}
+Icon=folder-remote
+Terminal=false
+Categories=Network;FileTransfer;
+EOF
+    chmod +x "/etc/skel/Desktop/${share_name}.desktop"
+    if ! grep -q "$smb_url" "/etc/skel/.config/gtk-3.0/bookmarks" 2>/dev/null; then
+        echo "${smb_url} ${share_name}" >> "/etc/skel/.config/gtk-3.0/bookmarks"
+    fi
+    msg_ok "Đã đồng bộ lối tắt vào /etc/skel cho TOÀN BỘ user AD đăng nhập sau này!"
+
+    msg_ok "========================================================="
+    msg_ok "TẠO LỐI TẮT FILE SERVER THÀNH CÔNG!"
+    msg_ok "User chỉ cần: Nhấp đúp vào icon '${share_name}' ngoài Desktop"
+    msg_ok "hoặc bấm vào sidebar trong Files (Nautilus) để mở thư mục."
+    msg_ok "Hệ thống tự dùng vé Kerberos của AD để vào thẳng (GIỐNG HỆT WINDOWS)!"
+    msg_ok "========================================================="
+}
+
 smb_file_share_menu() {
     while true; do
         echo -e "\n${C_BOLD}${C_BLUE}================================================================${C_RESET}"
         echo -e "${C_BOLD}${C_WHITE}       QUẢN LÝ THƯ MỤC CHIA SẺ MẠNG (WINDOWS SMB/CIFS)          ${C_RESET}"
         echo -e "${C_BOLD}${C_BLUE}================================================================${C_RESET}"
         echo " 1) Tra cứu thư mục chia sẻ trên Server (Browse SMB Shares)"
-        echo " 2) Kết nối (Mount) Thư mục chia sẻ vào máy Zorin"
-        echo " 3) Xem danh sách thư mục chia sẻ đang kết nối"
-        echo " 4) Hủy kết nối (Unmount) Thư mục chia sẻ"
-        echo " 5) Cài đặt / cập nhật các gói hỗ trợ SMB/CIFS"
+        echo " 2) Tạo Lối tắt Desktop & Sidebar (Single Sign-On - Không cần gõ mật khẩu)"
+        echo " 3) Kết nối (Mount) Thư mục chia sẻ cố định vào máy Zorin (/mnt/shares)"
+        echo " 4) Xem danh sách thư mục chia sẻ đang kết nối"
+        echo " 5) Hủy kết nối (Unmount) Thư mục chia sẻ"
+        echo " 6) Cài đặt / cập nhật các gói hỗ trợ SMB/CIFS"
         echo " 0) Quay lại Menu chính"
         echo "----------------------------------------------------------------"
 
         local sub_choice
-        prompt_with_default "Chọn chức năng [0-5]" "1" sub_choice
+        prompt_with_default "Chọn chức năng [0-6]" "2" sub_choice
 
         case "$sub_choice" in
             1) list_smb_shares_on_server ;;
-            2) mount_smb_share ;;
-            3) list_mounted_shares ;;
-            4) unmount_smb_share ;;
-            5) install_smb_dependencies ;;
+            2) create_desktop_share_shortcut ;;
+            3) mount_smb_share ;;
+            4) list_mounted_shares ;;
+            5) unmount_smb_share ;;
+            6) install_smb_dependencies ;;
             0) break ;;
             *) msg_err "Lựa chọn không hợp lệ." ;;
         esac
