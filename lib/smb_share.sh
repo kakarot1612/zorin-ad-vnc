@@ -67,13 +67,16 @@ list_smb_shares_on_server() {
         msg_info "Đang tra cứu danh sách share từ ${server_host} với quyền Guest..."
         smbclient -N -L "$server_host" 2>&1 || true
     else
-        local ad_user
-        prompt_with_default "Tài khoản AD" "$USER" ad_user
-        local ad_pass=""
-        prompt_secure_password "Mật khẩu cho tài khoản AD [${ad_user}]" ad_pass false
+        local raw_user
+        prompt_with_default "Tài khoản AD (VD: tom hoặc tom@bestpacific.com)" "$USER" raw_user
+        local clean_user clean_domain
+        normalize_ad_user_and_domain "$raw_user" "$domain" clean_user clean_domain
 
-        msg_info "Đang tra cứu danh sách share từ ${server_host}..."
-        smbclient -L "$server_host" -U "${domain}\\${ad_user}%${ad_pass}" 2>&1 || true
+        local ad_pass=""
+        prompt_secure_password "Mật khẩu cho tài khoản AD [${clean_user}@${clean_domain}]" ad_pass false
+
+        msg_info "Đang tra cứu danh sách share từ ${server_host} với tài khoản ${clean_domain}\\${clean_user}..."
+        smbclient -L "$server_host" -U "${clean_user}%${ad_pass}" -W "${clean_domain}" 2>&1 || true
         unset ad_pass
     fi
 }
@@ -111,9 +114,12 @@ mount_smb_share() {
 
     local target_user
     prompt_with_default "Tài khoản Zorin/AD cục bộ sẽ sở hữu thư mục mount" "${SUDO_USER:-$USER}" target_user
+    local clean_target_user _dummy_d
+    normalize_ad_user_and_domain "$target_user" "$domain" clean_target_user _dummy_d
+
     local target_uid target_gid
-    target_uid=$(id -u "$target_user" 2>/dev/null || echo "1000")
-    target_gid=$(id -g "$target_user" 2>/dev/null || echo "1000")
+    target_uid=$(id -u "$clean_target_user" 2>/dev/null || id -u "$target_user" 2>/dev/null || echo "1000")
+    target_gid=$(id -g "$clean_target_user" 2>/dev/null || id -g "$target_user" 2>/dev/null || echo "1000")
 
     echo ""
     echo -e "${C_BOLD}Chọn phương thức xác thực vào Windows File Server:${C_RESET}"
@@ -133,19 +139,22 @@ mount_smb_share() {
         mount_opts="${mount_opts},guest"
     else
         # Manual Domain Credentials
-        local ad_user
-        prompt_with_default "Tài khoản AD để truy cập File Share" "$target_user" ad_user
+        local raw_ad_user
+        prompt_with_default "Tài khoản AD để truy cập File Share" "$clean_target_user" raw_ad_user
+        local clean_ad_user clean_ad_domain
+        normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
+
         local ad_pass=""
-        prompt_secure_password "Mật khẩu AD của [${ad_user}]" ad_pass false
+        prompt_secure_password "Mật khẩu AD của [${clean_ad_user}@${clean_ad_domain}]" ad_pass false
 
         mkdir -p "$CREDENTIALS_DIR"
         chmod 700 "$CREDENTIALS_DIR"
 
         local cred_file="${CREDENTIALS_DIR}/${server_host}_${share_name}.cred"
         cat > "$cred_file" <<EOF
-username=${ad_user}
+username=${clean_ad_user}
 password=${ad_pass}
-domain=${domain}
+domain=${clean_ad_domain}
 EOF
         chmod 600 "$cred_file"
         unset ad_pass

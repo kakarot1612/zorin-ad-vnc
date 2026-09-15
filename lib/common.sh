@@ -164,5 +164,30 @@ press_enter_to_continue() {
     read -r -p "$(echo -e "\n${C_DIM}Nhấn [Enter] để quay lại menu...${C_RESET}")" _
 }
 
+# Normalize AD username and domain whether entered as user, user@domain.com, or DOMAIN\user
+normalize_ad_user_and_domain() {
+    local raw_input="$1"
+    local default_domain="$2"
+    local out_user_var="$3"
+    local out_domain_var="$4"
+
+    local parsed_user="$raw_input"
+    local parsed_domain="${default_domain:-bestpacific.com}"
+
+    if [[ "$raw_input" == *"@"* ]]; then
+        parsed_user="${raw_input%%@*}"
+        parsed_domain="${raw_input#*@}"
+    elif [[ "$raw_input" == *"\\"* ]]; then
+        parsed_domain="${raw_input%%\\*}"
+        parsed_user="${raw_input#*\\}"
+    elif [[ "$raw_input" == *"/"* ]]; then
+        parsed_domain="${raw_input%%/*}"
+        parsed_user="${raw_input#*/}"
+    fi
+
+    eval "$out_user_var=\"$parsed_user\""
+    eval "$out_domain_var=\"$parsed_domain\""
+}
+
 # Initialize logging on load
 init_logging

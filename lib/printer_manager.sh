@@ -194,14 +194,17 @@ add_windows_shared_printer() {
     elif [[ "$auth_choice" == "3" ]]; then
         smb_uri="smb://guest@${print_server}/${share_printer_name}"
     else
-        local ad_user
-        prompt_with_default "Tài khoản AD có quyền in" "${SUDO_USER:-$USER}" ad_user
+        local raw_ad_user
+        prompt_with_default "Tài khoản AD có quyền in (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_ad_user
+        local clean_ad_user clean_ad_domain
+        normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
+
         local ad_pass=""
-        prompt_secure_password "Mật khẩu cho [${ad_user}]" ad_pass false
+        prompt_secure_password "Mật khẩu cho [${clean_ad_user}@${clean_ad_domain}]" ad_pass false
 
         # Format: smb://domain%5Cusername:password@server/printer
         local url_user
-        url_user=$(echo -n "${domain}\\${ad_user}" | sed 's/\\/%5C/g')
+        url_user=$(echo -n "${clean_ad_domain}\\${clean_ad_user}" | sed 's/\\/%5C/g')
         smb_uri="smb://${url_user}:${ad_pass}@${print_server}/${share_printer_name}"
         unset ad_pass
     fi
