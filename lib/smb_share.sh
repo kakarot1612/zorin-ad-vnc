@@ -67,14 +67,16 @@ list_smb_shares_on_server() {
         msg_info "Đang tra cứu danh sách share từ ${server_host} với quyền Guest..."
         smbclient -N -L "$server_host" 2>&1 || true
     else
+        echo ""
         local raw_user
-        prompt_with_default "Tài khoản AD (VD: tom hoặc tom@bestpacific.com)" "$USER" raw_user
+        prompt_with_default "Tài khoản AD (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_user
         local clean_user clean_domain
         normalize_ad_user_and_domain "$raw_user" "$domain" clean_user clean_domain
 
         local ad_pass=""
         prompt_secure_password "Mật khẩu cho tài khoản AD [${clean_user}@${clean_domain}]" ad_pass false
 
+        echo ""
         msg_info "Đang tra cứu danh sách share từ ${server_host} với tài khoản ${clean_domain}\\${clean_user}..."
         smbclient -L "$server_host" -U "${clean_user}%${ad_pass}" -W "${clean_domain}" 2>&1 || true
         unset ad_pass

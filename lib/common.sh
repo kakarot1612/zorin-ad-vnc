@@ -96,14 +96,14 @@ prompt_with_default() {
     local user_input
 
     if [[ -n "$default_val" ]]; then
-        read -r -p "$(echo -e "${C_BOLD}${prompt_text}${C_RESET} [${C_CYAN}${default_val}${C_RESET}]: ")" user_input
-        if [[ -z "$user_input" ]]; then
-            eval "$result_var=\"$default_val\""
-        else
-            eval "$result_var=\"$user_input\""
-        fi
+        echo -e -n "${C_BOLD}${prompt_text}${C_RESET} [${C_CYAN}${default_val}${C_RESET}]: "
     else
-        read -r -p "$(echo -e "${C_BOLD}${prompt_text}${C_RESET}: ")" user_input
+        echo -e -n "${C_BOLD}${prompt_text}${C_RESET}: "
+    fi
+    read -r user_input
+    if [[ -z "$user_input" ]]; then
+        eval "$result_var=\"$default_val\""
+    else
         eval "$result_var=\"$user_input\""
     fi
 }
@@ -118,8 +118,9 @@ prompt_secure_password() {
     local pass2=""
 
     while true; do
-        read -r -s -p "$(echo -e "${C_BOLD}${prompt_text}${C_RESET}: ")" pass1
-        echo "" >&2
+        echo -e -n "${C_BOLD}${prompt_text}${C_RESET}: "
+        read -r -s pass1
+        echo ""
 
         if [[ -z "$pass1" ]]; then
             msg_warn "Mật khẩu không được để trống. Vui lòng nhập lại."
@@ -127,8 +128,9 @@ prompt_secure_password() {
         fi
 
         if [[ "$confirm" == "true" ]]; then
-            read -r -s -p "$(echo -e "${C_BOLD}Xác nhận lại mật khẩu${C_RESET}: ")" pass2
-            echo "" >&2
+            echo -e -n "${C_BOLD}Xác nhận lại mật khẩu${C_RESET}: "
+            read -r -s pass2
+            echo ""
 
             if [[ "$pass1" != "$pass2" ]]; then
                 msg_err "Mật khẩu xác nhận không khớp. Vui lòng nhập lại từ đầu."
@@ -149,7 +151,8 @@ prompt_confirm() {
     local choice_str="[Y/n]"
     [[ "$default_ans" =~ ^[Nn]$ ]] && choice_str="[y/N]"
 
-    read -r -p "$(echo -e "${C_YELLOW}${prompt_text}${C_RESET} ${choice_str}: ")" user_input
+    echo -e -n "${C_YELLOW}${prompt_text}${C_RESET} ${choice_str}: "
+    read -r user_input
     user_input="${user_input:-$default_ans}"
 
     if [[ "$user_input" =~ ^[Yy]$ ]]; then
