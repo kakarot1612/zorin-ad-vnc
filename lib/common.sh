@@ -88,6 +88,12 @@ check_root() {
     fi
 }
 
+# Flush any pending or leftover characters in stdin buffer
+flush_stdin() {
+    local discard
+    while read -t 0.05 -r discard 2>/dev/null; do :; done
+}
+
 # Prompt user for input with an optional default value
 prompt_with_default() {
     local prompt_text="$1"
@@ -95,12 +101,20 @@ prompt_with_default() {
     local result_var="$3"
     local user_input
 
+    flush_stdin
+
     if [[ -n "$default_val" ]]; then
         echo -e -n "${C_BOLD}${prompt_text}${C_RESET} [${C_CYAN}${default_val}${C_RESET}]: "
     else
         echo -e -n "${C_BOLD}${prompt_text}${C_RESET}: "
     fi
-    read -r user_input
+
+    if [[ -r /dev/tty ]]; then
+        read -r user_input < /dev/tty
+    else
+        read -r user_input
+    fi
+
     if [[ -z "$user_input" ]]; then
         eval "$result_var=\"$default_val\""
     else
@@ -118,8 +132,13 @@ prompt_secure_password() {
     local pass2=""
 
     while true; do
+        flush_stdin
         echo -e -n "${C_BOLD}${prompt_text}${C_RESET}: "
-        read -r -s pass1
+        if [[ -r /dev/tty ]]; then
+            read -r -s pass1 < /dev/tty
+        else
+            read -r -s pass1
+        fi
         echo ""
 
         if [[ -z "$pass1" ]]; then
@@ -128,8 +147,13 @@ prompt_secure_password() {
         fi
 
         if [[ "$confirm" == "true" ]]; then
+            flush_stdin
             echo -e -n "${C_BOLD}Xác nhận lại mật khẩu${C_RESET}: "
-            read -r -s pass2
+            if [[ -r /dev/tty ]]; then
+                read -r -s pass2 < /dev/tty
+            else
+                read -r -s pass2
+            fi
             echo ""
 
             if [[ "$pass1" != "$pass2" ]]; then
@@ -151,8 +175,13 @@ prompt_confirm() {
     local choice_str="[Y/n]"
     [[ "$default_ans" =~ ^[Nn]$ ]] && choice_str="[y/N]"
 
+    flush_stdin
     echo -e -n "${C_YELLOW}${prompt_text}${C_RESET} ${choice_str}: "
-    read -r user_input
+    if [[ -r /dev/tty ]]; then
+        read -r user_input < /dev/tty
+    else
+        read -r user_input
+    fi
     user_input="${user_input:-$default_ans}"
 
     if [[ "$user_input" =~ ^[Yy]$ ]]; then

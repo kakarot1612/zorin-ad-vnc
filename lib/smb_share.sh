@@ -108,15 +108,26 @@ mount_smb_share() {
 
     install_smb_dependencies || return 1
 
-    local server_host
-    prompt_with_default "Nhập IP hoặc Hostname của File Server" "10.0.60.30" server_host
-    local share_name
-    prompt_with_default "Nhập Tên Thư Mục Chia Sẻ (Share Name, VD: Data, Documents)" "" share_name
+    local server_host=""
+    while [[ -z "$server_host" ]]; do
+        prompt_with_default "Nhập IP hoặc Hostname của File Server" "10.0.60.30" server_host
+        if [[ -z "$server_host" ]]; then
+            msg_warn "Địa chỉ server không được để trống. Vui lòng nhập lại."
+        fi
+    done
 
-    if [[ -z "$server_host" ]] || [[ -z "$share_name" ]]; then
-        msg_err "Server và Share name không được để trống."
-        return 1
-    fi
+    local share_name=""
+    while [[ -z "$share_name" ]]; do
+        echo ""
+        prompt_with_default "Nhập Tên Thư Mục Chia Sẻ trên server (VD: Data, IT) [hoặc 'q' để hủy]" "" share_name
+        if [[ "$share_name" =~ ^[Qq]$ ]]; then
+            msg_info "Đã hủy thao tác kết nối thư mục chia sẻ."
+            return 0
+        fi
+        if [[ -z "$share_name" ]]; then
+            msg_warn "Tên thư mục chia sẻ không được để trống. Vui lòng nhập tên share."
+        fi
+    done
 
     # Clean share path
     share_name="${share_name#/}"
@@ -125,6 +136,7 @@ mount_smb_share() {
 
     local default_mount="/mnt/shares/${share_name}"
     local mount_point
+    echo ""
     prompt_with_default "Thư mục gắn (Mount Point) trên Zorin OS" "$default_mount" mount_point
 
     mkdir -p "$mount_point"
@@ -289,7 +301,7 @@ smb_file_share_menu() {
         echo "----------------------------------------------------------------"
 
         local sub_choice
-        prompt_with_default "Chọn chức năng [0-5]" "2" sub_choice
+        prompt_with_default "Chọn chức năng [0-5]" "1" sub_choice
 
         case "$sub_choice" in
             1) list_smb_shares_on_server ;;
