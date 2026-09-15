@@ -73,12 +73,31 @@ list_smb_shares_on_server() {
         local clean_user clean_domain
         normalize_ad_user_and_domain "$raw_user" "$domain" clean_user clean_domain
 
+        local workgroup
+        workgroup=$(get_ad_workgroup "$clean_domain")
+
         local ad_pass=""
         prompt_secure_password "Mật khẩu cho tài khoản AD [${clean_user}@${clean_domain}]" ad_pass false
 
         echo ""
-        msg_info "Đang tra cứu danh sách share từ ${server_host} với tài khoản ${clean_domain}\\${clean_user}..."
-        smbclient -L "$server_host" -U "${clean_user}%${ad_pass}" -W "${clean_domain}" 2>&1 || true
+        msg_info "Đang tra cứu danh sách share từ ${server_host} với tài khoản [${clean_user}@${clean_domain}]..."
+
+        local smb_out smb_code=0
+        # 1. Try with UPN (tom@bestpacific.com)
+        smb_out=$(smbclient -L "$server_host" -U "${clean_user}@${clean_domain}%${ad_pass}" --option="client min protocol=SMB2" 2>&1) || smb_code=$?
+
+        # 2. If UPN failed with logon failure, fallback to NetBIOS workgroup (BESTPACIFIC\tom)
+        if [[ $smb_code -ne 0 ]] && [[ "$smb_out" == *"NT_STATUS_LOGON_FAILURE"* ]]; then
+            msg_info "Thử lại xác thực với NetBIOS Domain [${workgroup}\\${clean_user}]..."
+            smb_out=$(smbclient -L "$server_host" -U "${clean_user}%${ad_pass}" -W "${workgroup}" --option="client min protocol=SMB2" 2>&1) || smb_code=$?
+        fi
+
+        # 3. If still failed, try NetBIOS backslash format
+        if [[ $smb_code -ne 0 ]] && [[ "$smb_out" == *"NT_STATUS_LOGON_FAILURE"* ]]; then
+            smb_out=$(smbclient -L "$server_host" -U "${workgroup}\\${clean_user}%${ad_pass}" --option="client min protocol=SMB2" 2>&1) || smb_code=$?
+        fi
+
+        echo "$smb_out"
         unset ad_pass
     fi
 }
@@ -146,6 +165,9 @@ mount_smb_share() {
         local clean_ad_user clean_ad_domain
         normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
 
+        local workgroup
+        workgroup=$(get_ad_workgroup "$clean_ad_domain")
+
         local ad_pass=""
         prompt_secure_password "Mật khẩu AD của [${clean_ad_user}@${clean_ad_domain}]" ad_pass false
 
@@ -156,7 +178,7 @@ mount_smb_share() {
         cat > "$cred_file" <<EOF
 username=${clean_ad_user}
 password=${ad_pass}
-domain=${clean_ad_domain}
+domain=${workgroup}
 EOF
         chmod 600 "$cred_file"
         unset ad_pass

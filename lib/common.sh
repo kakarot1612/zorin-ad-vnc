@@ -192,5 +192,18 @@ normalize_ad_user_and_domain() {
     eval "$out_domain_var=\"$parsed_domain\""
 }
 
+# Get AD NetBIOS workgroup name (e.g. BESTPACIFIC from bestpacific.com)
+get_ad_workgroup() {
+    local domain="$1"
+    local wg=""
+    if command -v realm >/dev/null 2>&1; then
+        wg=$(realm list 2>/dev/null | grep -E '^[[:space:]]*workgroup-name:' | awk '{print $2}' | head -n 1)
+    fi
+    if [[ -z "$wg" ]]; then
+        wg="${domain%%.*}"
+    fi
+    echo "${wg^^}"
+}
+
 # Initialize logging on load
 init_logging
