@@ -30,9 +30,12 @@ install_printer_dependencies() {
         }
     fi
 
-    # Ensure CUPS SMB backend exists
+    # Ensure CUPS SMB backend exists and has correct permissions
     if [[ ! -e "/usr/lib/cups/backend/smb" ]] && [[ -x "/usr/bin/smbspool" ]]; then
         ln -sf /usr/bin/smbspool /usr/lib/cups/backend/smb 2>/dev/null || true
+    fi
+    if [[ -e "/usr/lib/cups/backend/smb" ]]; then
+        chmod 700 /usr/lib/cups/backend/smb 2>/dev/null || true
     fi
 
     systemctl daemon-reload 2>/dev/null || true
@@ -55,9 +58,13 @@ list_printers() {
         return 1
     fi
 
-    echo -e "${C_BOLD}Trạng thái máy in:${C_RESET}"
+    local default_dest
+    default_dest=$(lpstat -d 2>/dev/null | awk -F': ' '{print $2}')
+    echo -e "${C_BOLD}Máy in mặc định:${C_RESET} ${C_GREEN}${default_dest:-Chưa thiết lập}${C_RESET}\n"
+
+    echo -e "${C_BOLD}Trạng thái các máy in:${C_RESET}"
     local printers
-    printers=$(lpstat -p -d 2>&1 || true)
+    printers=$(lpstat -p 2>&1 || true)
     if [[ -z "$printers" ]] || [[ "$printers" =~ "no system default destination" && ! "$printers" =~ "printer" ]]; then
         msg_info "Chưa có máy in nào được cài đặt trên máy này."
     else
@@ -80,6 +87,14 @@ add_network_printer_ip() {
     if [[ -z "$printer_ip" ]]; then
         msg_err "Địa chỉ IP máy in không được để trống."
         return 1
+    fi
+
+    # Quick reachability check
+    msg_info "Đang kiểm tra kết nối mạng tới ${printer_ip}..."
+    if ping -c 1 -W 2 "$printer_ip" >/dev/null 2>&1; then
+        msg_ok "Máy in tại ${printer_ip} đang ONLINE (phản hồi ping tốt)."
+    else
+        msg_warn "Không nhận được phản hồi ping từ ${printer_ip} (có thể do firewall hoặc máy in tắt ICMP ping)."
     fi
 
     local printer_name
@@ -156,6 +171,105 @@ add_network_printer_ip() {
     fi
 }
 
+browse_and_select_smb_printer() {
+    local print_server="$1"
+    local domain="$2"
+    local -n out_selected="$3"
+    local -n out_user="$4"
+    local -n out_pass="$5"
+
+    msg_info "Đang thăm dò danh sách máy in chia sẻ trên Server ${print_server}..."
+
+    local smb_out=""
+    local workgroup
+    workgroup=$(get_ad_workgroup "$domain")
+
+    # 1. Try Guest / Anonymous first
+    smb_out=$(smbclient -N -L "$print_server" --option="client min protocol=SMB2" 2>&1 || true)
+
+    # Check if access was denied or needs logon
+    if [[ "$smb_out" =~ "NT_STATUS_ACCESS_DENIED" ]] || [[ "$smb_out" =~ "NT_STATUS_LOGON_FAILURE" ]] || [[ ! "$smb_out" =~ "Printer" ]]; then
+        msg_info "Server yêu cầu xác thực tài khoản để xem danh sách máy in."
+        local raw_ad_user
+        prompt_with_default "Tài khoản AD có quyền truy cập (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_ad_user
+        local clean_ad_user clean_ad_domain
+        normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
+
+        local ad_pass=""
+        prompt_secure_password "Mật khẩu cho [${clean_ad_user}@${clean_ad_domain}]" ad_pass false
+
+        out_user="${clean_ad_user}@${clean_ad_domain}"
+        out_pass="$ad_pass"
+
+        msg_info "Đang kết nối tới ${print_server}..."
+        local auth_attempts=(
+            "-W ${workgroup} -U ${clean_ad_user}"
+            "-U ${clean_ad_user}@${clean_ad_domain}"
+            "-U ${clean_ad_user}"
+            "-W WORKGROUP -U ${clean_ad_user}"
+        )
+
+        for strat in "${auth_attempts[@]}"; do
+            # shellcheck disable=SC2086
+            smb_out=$(printf "%s\n" "$ad_pass" | smbclient -L "$print_server" $strat --option="client min protocol=SMB2" 2>&1)
+            if [[ $? -eq 0 ]] && [[ "$smb_out" =~ "Sharename" ]]; then
+                break
+            fi
+        done
+    fi
+
+    # Parse shares where Type == "Printer"
+    local printer_list=()
+    local comment_list=()
+
+    while IFS='|' read -r p_name p_comm; do
+        [[ -z "$p_name" ]] && continue
+        # Ignore IPC and non-printer shares
+        printer_list+=("$p_name")
+        comment_list+=("$p_comm")
+    done < <(echo "$smb_out" | awk '!/[ \t]+(Disk|IPC)[ \t]+/ && !/Sharename/ && !/---------/ {
+        for(i=1;i<=NF;i++) {
+            if($i=="Printer") {
+                name=""; for(j=1;j<i;j++) name=(name?name " ":"")$j;
+                comment=""; for(k=i+1;k<=NF;k++) comment=(comment?comment " ":"")$k;
+                if(name != "") print name "|" comment;
+                break;
+            }
+        }
+    }')
+
+    if [[ ${#printer_list[@]} -gt 0 ]]; then
+        echo ""
+        echo -e "${C_BOLD}${C_GREEN}================================================================${C_RESET}"
+        echo -e "${C_BOLD}${C_WHITE} DANH SÁCH MÁY IN TRÊN WINDOWS PRINT SERVER (${print_server}):  ${C_RESET}"
+        echo -e "${C_BOLD}${C_GREEN}================================================================${C_RESET}"
+        for i in "${!printer_list[@]}"; do
+            local num=$((i + 1))
+            local p_name="${printer_list[$i]}"
+            local p_comm="${comment_list[$i]}"
+            if [[ -n "$p_comm" ]]; then
+                printf "  ${C_CYAN}%2d)${C_RESET} %-28s ${C_YELLOW}(%s)${C_RESET}\n" "$num" "$p_name" "$p_comm"
+            else
+                printf "  ${C_CYAN}%2d)${C_RESET} %-28s\n" "$num" "$p_name"
+            fi
+        done
+        echo -e "   0) Nhập tên máy in khác thủ công (Manual Input)"
+        echo -e "----------------------------------------------------------------"
+
+        local p_sel
+        prompt_with_default "Chọn máy in muốn kết nối [1-${#printer_list[@]}]" "1" p_sel
+        if [[ "$p_sel" =~ ^[0-9]+$ ]] && [[ "$p_sel" -ge 1 ]] && [[ "$p_sel" -le "${#printer_list[@]}" ]]; then
+            out_selected="${printer_list[$((p_sel - 1))]}"
+            msg_ok "Đã chọn máy in: ${out_selected}"
+            return 0
+        fi
+    else
+        msg_info "Không tự động tìm thấy danh sách máy in từ ${print_server} (hoặc Server giới hạn quyền duyệt)."
+    fi
+
+    return 1
+}
+
 add_windows_shared_printer() {
     check_root
     msg_step "THÊM MÁY IN SHARE TỪ WINDOWS PRINT SERVER (SMB PROTOCOL)"
@@ -163,68 +277,142 @@ add_windows_shared_printer() {
     install_printer_dependencies || return 1
 
     local print_server
-    prompt_with_default "Nhập IP hoặc Hostname của Windows Print Server (VD: 10.0.60.18 hoặc printserver)" "" print_server
+    prompt_with_default "Nhập IP hoặc Hostname của Windows Print Server" "vn-printersrv" print_server
 
-    local share_printer_name
-    prompt_with_default "Nhập Tên máy in chia sẻ trên Server (VD: Canon_Floor2, HP_Ketoan)" "" share_printer_name
-
-    if [[ -z "$print_server" ]] || [[ -z "$share_printer_name" ]]; then
-        msg_err "Địa chỉ server và tên máy in không được để trống."
+    if [[ -z "$print_server" ]]; then
+        msg_err "Địa chỉ server không được để trống."
         return 1
     fi
-
-    local local_printer_name
-    prompt_with_default "Tên máy in hiển thị trên Zorin OS" "${share_printer_name}" local_printer_name
 
     local domain
     domain=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
     domain="${domain:-bestpacific.com}"
 
+    local share_printer_name=""
+    local auth_user=""
+    local auth_pass=""
+
+    # Attempt to browse server shares automatically
+    echo ""
+    if prompt_confirm "Bạn có muốn tự động tra cứu danh sách máy in trên ${print_server}?" "Y"; then
+        browse_and_select_smb_printer "$print_server" "$domain" share_printer_name auth_user auth_pass || true
+    fi
+
+    # If not selected via browse, prompt manually
+    if [[ -z "$share_printer_name" ]]; then
+        prompt_with_default "Nhập Tên máy in chia sẻ trên Server (VD: Canon_Floor2, HP_Ketoan)" "" share_printer_name
+    fi
+
+    if [[ -z "$share_printer_name" ]]; then
+        msg_err "Tên máy in chia sẻ không được để trống."
+        return 1
+    fi
+
+    # Sanitize local CUPS printer name (CUPS does not allow spaces or special chars)
+    local default_local_name
+    default_local_name=$(echo "${share_printer_name}" | tr ' ' '_' | tr -cd 'a-zA-Z0-9_-')
+    local local_printer_name
+    prompt_with_default "Tên máy in hiển thị trên Zorin OS" "${default_local_name}" local_printer_name
+
+    # Authentication setup
     echo ""
     echo -e "${C_BOLD}Phương thức xác thực tới Windows Print Server:${C_RESET}"
-    echo "  1) Nhập tài khoản Domain AD (Khuyên dùng)"
-    echo "  2) Sử dụng Kerberos Single Sign-On (Nếu server hỗ trợ krb5 SMB printing)"
-    echo "  3) Khách (Guest / Không mật khẩu)"
+    if [[ -n "$auth_user" && -n "$auth_pass" ]]; then
+        echo "  1) Sử dụng tài khoản vừa xác thực [${auth_user}] (Khuyên dùng)"
+    else
+        echo "  1) Nhập tài khoản Domain AD cá nhân có quyền in (Khuyên dùng)"
+    fi
+    echo "  2) Sử dụng vé Kerberos Single Sign-On (krb5 SSO)"
+    echo "  3) Chế độ Khách (Guest / Anonymous)"
     local auth_choice
     prompt_with_default "Lựa chọn [1-3]" "1" auth_choice
 
     local smb_uri=""
+    local url_share_name
+    url_share_name=$(echo "$share_printer_name" | sed 's/ /%20/g')
+
     if [[ "$auth_choice" == "2" ]]; then
-        smb_uri="smb://${print_server}/${share_printer_name}"
+        smb_uri="smb://${print_server}/${url_share_name}"
     elif [[ "$auth_choice" == "3" ]]; then
-        smb_uri="smb://guest@${print_server}/${share_printer_name}"
+        smb_uri="smb://guest@${print_server}/${url_share_name}"
     else
-        local raw_ad_user
-        prompt_with_default "Tài khoản AD có quyền in (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_ad_user
-        local clean_ad_user clean_ad_domain
-        normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
+        local ad_user="$auth_user"
+        local ad_pass="$auth_pass"
 
-        local ad_pass=""
-        prompt_secure_password "Mật khẩu cho [${clean_ad_user}@${clean_ad_domain}]" ad_pass false
+        if [[ -z "$ad_user" || -z "$ad_pass" ]]; then
+            local raw_ad_user
+            prompt_with_default "Tài khoản AD có quyền in (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_ad_user
+            local clean_ad_user clean_ad_domain
+            normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
+            ad_user="${clean_ad_user}@${clean_ad_domain}"
 
-        # Format: smb://domain%5Cusername:password@server/printer
+            prompt_secure_password "Mật khẩu cho [${clean_ad_user}@${clean_ad_domain}]" ad_pass false
+        fi
+
+        local clean_user="${ad_user%@*}"
+        local clean_dom="${ad_user#*@}"
         local url_user
-        url_user=$(echo -n "${clean_ad_domain}\\${clean_ad_user}" | sed 's/\\/%5C/g')
-        smb_uri="smb://${url_user}:${ad_pass}@${print_server}/${share_printer_name}"
+        url_user=$(echo -n "${clean_dom}\\${clean_user}" | sed 's/\\/%5C/g')
+        smb_uri="smb://${url_user}:${ad_pass}@${print_server}/${url_share_name}"
         unset ad_pass
     fi
 
-    msg_info "Đang cài đặt máy in SMB: ${local_printer_name}..."
-    
-    # Add printer with generic postscript or PCL driver
-    if lpadmin -p "$local_printer_name" -E -v "$smb_uri" -m "drv:///sample.drv/generic.ppd"; then
+    # Driver Selection
+    echo ""
+    echo -e "${C_BOLD}Chọn Driver (Trình điều khiển) cho máy in:${C_RESET}"
+    echo "  1) Generic PostScript Printer (Khuyên dùng - Chuẩn in phổ biến nhất cho Print Server)"
+    echo "  2) Generic PCL 6 / PCL XL Printer (Tương thích tốt máy HP, Canon, Ricoh, Brother)"
+    echo "  3) Raw Queue (Không qua lọc - Gửi lệnh in thô cho Windows Server tự xử lý)"
+    echo "  4) Tự chỉ định file .ppd riêng"
+    local driver_choice
+    prompt_with_default "Lựa chọn driver [1-4]" "1" driver_choice
+
+    local driver_opt=""
+    case "$driver_choice" in
+        1) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
+        2)
+            if lpinfo -m 2>/dev/null | grep -q "Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd"; then
+                driver_opt="-m foomatic-db-compressed-ppds:0/ppd/foomatic-ppd/Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd"
+            else
+                driver_opt="-m drv:///sample.drv/generic.ppd"
+            fi
+            ;;
+        3) driver_opt="-m raw" ;;
+        4)
+            local ppd_path
+            prompt_with_default "Nhập đường dẫn đầy đủ tới file .ppd" "" ppd_path
+            if [[ -f "$ppd_path" ]]; then
+                driver_opt="-P $ppd_path"
+            else
+                msg_warn "Không tìm thấy file PPD. Tự động dùng Generic PostScript."
+                driver_opt="-m drv:///sample.drv/generic.ppd"
+            fi
+            ;;
+        *) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
+    esac
+
+    msg_info "Đang cài đặt máy in SMB: ${local_printer_name} -> ${print_server}/${share_printer_name}..."
+
+    # Configure CUPS printer queue
+    # shellcheck disable=SC2086
+    if lpadmin -p "$local_printer_name" -E -v "$smb_uri" $driver_opt; then
         cupsaccept "$local_printer_name" 2>/dev/null || true
         cupsenable "$local_printer_name" 2>/dev/null || true
 
         msg_ok "========================================================="
         msg_ok "THÊM MÁY IN TỪ WINDOWS PRINT SERVER THÀNH CÔNG!"
-        msg_ok "Tên máy in: ${local_printer_name}"
-        msg_ok "Server    : ${print_server}/${share_printer_name}"
+        msg_ok "Tên máy in : ${local_printer_name}"
+        msg_ok "Server     : \\\\${print_server}\\${share_printer_name}"
+        msg_ok "Driver     : ${driver_opt}"
         msg_ok "========================================================="
 
-        if prompt_confirm "Bạn có muốn đặt làm máy in mặc định?" "Y"; then
+        if prompt_confirm "Bạn có muốn đặt máy in này làm MẶC ĐỊNH?" "Y"; then
             lpoptions -d "$local_printer_name"
-            msg_ok "Đã đặt làm máy in mặc định."
+            msg_ok "Đã đặt ${local_printer_name} làm máy in mặc định."
+        fi
+
+        if prompt_confirm "Bạn có muốn in một trang thử nghiệm (Print Test Page)?" "Y"; then
+            print_test_page "$local_printer_name"
         fi
         return 0
     else
