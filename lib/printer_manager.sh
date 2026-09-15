@@ -191,7 +191,7 @@ browse_and_select_smb_printer() {
     if [[ "$smb_out" =~ "NT_STATUS_ACCESS_DENIED" ]] || [[ "$smb_out" =~ "NT_STATUS_LOGON_FAILURE" ]] || [[ ! "$smb_out" =~ "Printer" ]]; then
         msg_info "Server yêu cầu xác thực tài khoản để xem danh sách máy in."
         local raw_ad_user
-        prompt_with_default "Tài khoản AD có quyền truy cập (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_ad_user
+        prompt_with_default "Tài khoản duyệt danh sách (User cá nhân thông thường, VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_ad_user
         local clean_ad_user clean_ad_domain
         normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
 
@@ -314,57 +314,90 @@ add_windows_shared_printer() {
     local local_printer_name
     prompt_with_default "Tên máy in hiển thị trên Zorin OS" "${default_local_name}" local_printer_name
 
-    # Authentication setup
+    # Authentication setup for Connecting & Installing Printer Queue
     echo ""
-    echo -e "${C_BOLD}Phương thức xác thực tới Windows Print Server:${C_RESET}"
-    if [[ -n "$auth_user" && -n "$auth_pass" ]]; then
-        echo "  1) Sử dụng tài khoản vừa xác thực [${auth_user}] (Khuyên dùng)"
-    else
-        echo "  1) Nhập tài khoản Domain AD cá nhân có quyền in (Khuyên dùng)"
-    fi
-    echo "  2) Sử dụng vé Kerberos Single Sign-On (krb5 SSO)"
-    echo "  3) Chế độ Khách (Guest / Anonymous)"
+    echo -e "${C_BOLD}${C_YELLOW}=== XÁC THỰC KẾT NỐI MÁY IN TRÊN WINDOWS PRINT SERVER ===${C_RESET}"
+    echo -e "${C_DIM}Lưu ý: Để kết nối và cài đặt hàng đợi máy in từ Windows Print Server, hệ thống${C_RESET}"
+    echo -e "${C_DIM}yêu cầu tài khoản có quyền Quản trị / Cài đặt máy in trên AD (Domain Admin hoặc IT Admin).${C_RESET}\n"
+
     local auth_choice
-    prompt_with_default "Lựa chọn [1-3]" "1" auth_choice
+    if [[ -n "$auth_user" && -n "$auth_pass" ]]; then
+        echo "  1) Nhập tài khoản Quản trị AD (Domain Administrator / IT Admin) [Bắt buộc / Khuyên dùng]"
+        echo "  2) Dùng lại tài khoản duyệt vừa nhập [${auth_user}] (nếu tài khoản này có quyền admin)"
+        echo "  3) Sử dụng vé Kerberos Single Sign-On (krb5 SSO)"
+        echo "  4) Chế độ Khách (Guest / Anonymous)"
+        prompt_with_default "Lựa chọn phương thức xác thực [1-4]" "1" auth_choice
+    else
+        echo "  1) Nhập tài khoản Quản trị AD (Domain Administrator / IT Admin) [Bắt buộc / Khuyên dùng]"
+        echo "  2) Sử dụng vé Kerberos Single Sign-On (krb5 SSO)"
+        echo "  3) Chế độ Khách (Guest / Anonymous)"
+        prompt_with_default "Lựa chọn phương thức xác thực [1-3]" "1" auth_choice
+        if [[ "$auth_choice" == "2" ]]; then
+            auth_choice="3"
+        elif [[ "$auth_choice" == "3" ]]; then
+            auth_choice="4"
+        fi
+    fi
 
     local smb_uri=""
     local url_share_name
     url_share_name=$(urlencode "$share_printer_name")
 
-    if [[ "$auth_choice" == "2" ]]; then
+    if [[ "$auth_choice" == "3" ]]; then
         smb_uri="smb://${print_server}/${url_share_name}"
-    elif [[ "$auth_choice" == "3" ]]; then
+    elif [[ "$auth_choice" == "4" ]]; then
         smb_uri="smb://guest@${print_server}/${url_share_name}"
-    else
-        local ad_user="$auth_user"
-        local ad_pass="$auth_pass"
-
-        if [[ -z "$ad_user" || -z "$ad_pass" ]]; then
-            local raw_ad_user
-            prompt_with_default "Tài khoản AD có quyền in (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_ad_user
-            local clean_ad_user clean_ad_domain
-            normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
-            ad_user="${clean_ad_user}@${clean_ad_domain}"
-
-            prompt_secure_password "Mật khẩu cho [${clean_ad_user}@${clean_ad_domain}]" ad_pass false
-        fi
-
-        local clean_user="${ad_user%@*}"
-        local clean_dom="${ad_user#*@}"
+    elif [[ "$auth_choice" == "2" && -n "$auth_user" && -n "$auth_pass" ]]; then
+        local clean_user="${auth_user%@*}"
+        local clean_dom="${auth_user#*@}"
         local workgroup
         workgroup=$(get_ad_workgroup "$clean_dom")
 
         local enc_workgroup enc_user enc_pass
         enc_workgroup=$(urlencode "$workgroup")
         enc_user=$(urlencode "$clean_user")
-        enc_pass=$(urlencode "$ad_pass")
+        enc_pass=$(urlencode "$auth_pass")
 
         if [[ -n "$enc_workgroup" ]]; then
             smb_uri="smb://${enc_workgroup}%5C${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
         else
             smb_uri="smb://${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
         fi
-        unset ad_pass enc_pass
+        unset enc_pass
+    else
+        # Option 1: Admin account with installation privileges
+        echo ""
+        local raw_admin_user
+        prompt_with_default "Tài khoản Quản trị AD có quyền cài đặt (VD: Administrator hoặc it_admin)" "Administrator" raw_admin_user
+        local clean_admin_user clean_admin_domain
+        normalize_ad_user_and_domain "$raw_admin_user" "$domain" clean_admin_user clean_admin_domain
+
+        local admin_pass=""
+        prompt_secure_password "Mật khẩu cho [${clean_admin_user}@${clean_admin_domain}]" admin_pass false
+
+        local workgroup
+        workgroup=$(get_ad_workgroup "$clean_admin_domain")
+
+        msg_info "Đang kiểm tra xác thực quyền tài khoản [${clean_admin_user}] với ${print_server}..."
+        local auth_check
+        auth_check=$(printf "%s\n" "$admin_pass" | smbclient -L "$print_server" -W "$workgroup" -U "$clean_admin_user" --option="client min protocol=SMB2" 2>&1 || true)
+        if [[ "$auth_check" =~ "Sharename" ]]; then
+            msg_ok "Xác thực tài khoản quản trị [${clean_admin_user}] thành công!"
+        elif [[ "$auth_check" =~ "NT_STATUS_LOGON_FAILURE" ]]; then
+            msg_warn "Cảnh báo: Xác thực thất bại với tài khoản [${clean_admin_user}]. Hãy kiểm tra lại mật khẩu."
+        fi
+
+        local enc_workgroup enc_user enc_pass
+        enc_workgroup=$(urlencode "$workgroup")
+        enc_user=$(urlencode "$clean_admin_user")
+        enc_pass=$(urlencode "$admin_pass")
+
+        if [[ -n "$enc_workgroup" ]]; then
+            smb_uri="smb://${enc_workgroup}%5C${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
+        else
+            smb_uri="smb://${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
+        fi
+        unset admin_pass enc_pass
     fi
 
     # Driver Selection
