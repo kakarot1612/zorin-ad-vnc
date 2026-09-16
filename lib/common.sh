@@ -11,7 +11,14 @@ export ERR_ROOT_REQUIRED=2
 export ERR_DNS=3
 export ERR_AD_JOIN=4
 export ERR_SSSD=5
-export ERR_VNC=6
+# Automatically load .env configuration if present in workspace root
+_ENV_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.env"
+if [[ -f "$_ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$_ENV_FILE" 2>/dev/null || true
+    set +a
+fi
 
 # Colors
 export C_RESET='\033[0m'

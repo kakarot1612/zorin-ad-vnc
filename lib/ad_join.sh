@@ -127,12 +127,12 @@ join_active_directory() {
         leave_active_directory
     fi
 
-    # 3. Interactive Inputs (All values are entered dynamically by the user - no hardcoded defaults)
-    local domain=""
-    local dc1=""
-    local dc2=""
-    local admin_user=""
-    local admin_pass=""
+    # 3. Inputs (Reads from .env if configured, otherwise prompts user dynamically)
+    local domain="${AD_DOMAIN:-}"
+    local dc1="${AD_DC1:-}"
+    local dc2="${AD_DC2:-}"
+    local admin_user="${AD_ADMIN_USER:-}"
+    local admin_pass="${AD_ADMIN_PASS:-}"
 
     while [[ -z "$domain" ]]; do
         prompt_with_default "Nhập AD Domain FQDN" "" domain
@@ -146,8 +146,10 @@ join_active_directory() {
         [[ -z "$dc1" ]] && msg_warn "IP Domain Controller chính không được để trống!"
     done
 
-    prompt_with_default "Nhập IP AD Domain Controller phụ (Tùy chọn - Enter nếu không có)" "" dc2
-    dc2=$(echo "$dc2" | tr -d '[:space:]')
+    if [[ -z "$dc2" ]]; then
+        prompt_with_default "Nhập IP AD Domain Controller phụ (Tùy chọn - Enter nếu không có)" "" dc2
+        dc2=$(echo "$dc2" | tr -d '[:space:]')
+    fi
 
     while [[ -z "$admin_user" ]]; do
         prompt_with_default "Nhập tên tài khoản quản trị AD để Join" "" admin_user
@@ -155,8 +157,10 @@ join_active_directory() {
         [[ -z "$admin_user" ]] && msg_warn "Tài khoản quản trị không được để trống!"
     done
     
-    # Prompt password securely - hidden characters, no logging
-    prompt_secure_password "Nhập mật khẩu cho tài khoản AD [${admin_user}]" admin_pass false
+    # Prompt password securely if not provided via environment
+    if [[ -z "$admin_pass" ]]; then
+        prompt_secure_password "Nhập mật khẩu cho tài khoản AD [${admin_user}]" admin_pass false
+    fi
 
     # 4. Sanitize admin_user: strip any DOMAIN\ or DOMAIN/ prefix and @domain suffix
     local clean_admin_user="$admin_user"

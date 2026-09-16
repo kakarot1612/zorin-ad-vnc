@@ -4,6 +4,10 @@
 /var/log/zorin-x11vnc.log
 
 # Passwords & Credentials
+.env
+.env.*
+*.env
+!.env.example
 /etc/x11vnc/vncpwd
 *.pwd
 *.keytab
