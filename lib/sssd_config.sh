@@ -226,11 +226,26 @@ EOF
     systemctl restart systemd-resolved 2>/dev/null || true
 
     # 4. Perform direct Kerberos nsupdate if machine ticket exists
-    msg_info "4. Gửi yêu cầu cập nhật bản ghi DNS trực tiếp lên Domain Controller..."
+    msg_info "4. Gửi yêu cầu cập nhật bản ghi DNS (RFC 2136) trực tiếp lên Domain Controller..."
+    if ! command -v nsupdate >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get install -y bind9-dnsutils >/dev/null 2>&1 || apt-get install -y dnsutils >/dev/null 2>&1 || true
+    fi
+
     if [[ -f /etc/krb5.keytab ]] && command -v nsupdate >/dev/null 2>&1; then
         local machine_principal="${current_host^^}\$@${domain^^}"
         # Obtain Kerberos ticket for machine account
         kinit -k "$machine_principal" 2>/dev/null || true
+
+        local octet1 octet2 octet3 octet4 ptr_record=""
+        if [[ "$current_ip" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            octet1="${BASH_REMATCH[1]}"
+            octet2="${BASH_REMATCH[2]}"
+            octet3="${BASH_REMATCH[3]}"
+            octet4="${BASH_REMATCH[4]}"
+            ptr_record="${octet4}.${octet3}.${octet2}.${octet1}.in-addr.arpa"
+        fi
+
         local nsupdate_script="/tmp/nsupdate_ad.txt"
         cat > "$nsupdate_script" <<EOF
 server ${domain}
@@ -238,14 +253,39 @@ update delete ${fqdn} A
 update add ${fqdn} 3600 A ${current_ip}
 send
 EOF
+        if [[ -n "$ptr_record" ]]; then
+            cat >> "$nsupdate_script" <<EOF
+server ${domain}
+update delete ${ptr_record} PTR
+update add ${ptr_record} 3600 PTR ${fqdn}.
+send
+EOF
+        fi
+
         if nsupdate -g "$nsupdate_script" 2>&1; then
             msg_ok "Đã đăng ký trực tiếp bản ghi DNS: ${fqdn} -> ${current_ip}"
         else
-            msg_info "Lệnh nsupdate hoàn thành. SSSD sẽ tự động đồng bộ định kỳ."
+            msg_info "Lệnh nsupdate hoàn tất. SSSD sẽ tự động gửi đồng bộ định kỳ."
         fi
         rm -f "$nsupdate_script" 2>/dev/null || true
         kdestroy 2>/dev/null || true
     fi
+
+    # 5. NetworkManager Dispatcher Hook for automatic RFC 2136 updates on DHCP IP change
+    msg_info "5. Thiết lập NetworkManager Hook để tự động cập nhật DNS khi nhận IP mới..."
+    mkdir -p /etc/NetworkManager/dispatcher.d 2>/dev/null || true
+    cat > /etc/NetworkManager/dispatcher.d/99-ad-dns-update.sh <<'EOF'
+#!/bin/bash
+# Automatically trigger SSSD dynamic DNS update on network up / DHCP change
+ACTION="$2"
+if [[ "$ACTION" == "up" || "$ACTION" == "dhcp4-change" ]]; then
+    if systemctl is-active --quiet sssd; then
+        systemctl restart sssd >/dev/null 2>&1 &
+    fi
+fi
+EOF
+    chmod 755 /etc/NetworkManager/dispatcher.d/99-ad-dns-update.sh 2>/dev/null || true
+    msg_ok "Đã cài đặt NetworkManager Dispatcher Hook: /etc/NetworkManager/dispatcher.d/99-ad-dns-update.sh"
 
     msg_ok "========================================================="
     msg_ok "ĐĂNG KÝ TÊN MÁY LÊN HỆ THỐNG MẠNG HOÀN TẤT!"
