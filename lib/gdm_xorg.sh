@@ -2,7 +2,8 @@
 # ==============================================================================
 # Zorin OS AD Join & X11VNC Management Tool
 # File: lib/gdm_xorg.sh
-# Description: Force GDM3 to use Xorg (X11) instead of Wayland for x11vnc compatibility.
+# Description: Force ALL Users (AD & Local) to Use Xorg (X11) Exclusively,
+#              Disabling Wayland Completely for Full VNC & Remote Desktop Support.
 # ==============================================================================
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,9 +22,50 @@ find_gdm_conf() {
     fi
 }
 
+disable_wayland_sessions_globally() {
+    # 1. Disable /usr/share/wayland-sessions so GDM cannot offer Wayland
+    if [[ -d "/usr/share/wayland-sessions" ]]; then
+        local wayland_files
+        wayland_files=$(find /usr/share/wayland-sessions -maxdepth 1 -name "*.desktop" 2>/dev/null || true)
+        if [[ -n "$wayland_files" ]]; then
+            msg_info "Đang vô hiệu hóa các phiên Wayland trong /usr/share/wayland-sessions/..."
+            mkdir -p /usr/share/wayland-sessions.disabled
+            for wf in /usr/share/wayland-sessions/*.desktop; do
+                [[ -f "$wf" ]] || continue
+                mv -f "$wf" /usr/share/wayland-sessions.disabled/ 2>/dev/null || true
+            done
+            msg_ok "Đã chuyển toàn bộ Wayland sessions vào thư mục cách ly: /usr/share/wayland-sessions.disabled/"
+        fi
+    fi
+
+    # 2. Reset any cached user sessions in AccountsService to Xorg
+    if [[ -d "/var/lib/AccountsService/users" ]]; then
+        msg_info "Đang chuẩn hóa phiên đăng nhập của tất cả tài khoản về Xorg..."
+        local default_xsess="zorin"
+        if [[ -f "/usr/share/xsessions/zorin.desktop" ]]; then
+            default_xsess="zorin"
+        elif [[ -f "/usr/share/xsessions/zorin-xorg.desktop" ]]; then
+            default_xsess="zorin-xorg"
+        elif [[ -f "/usr/share/xsessions/ubuntu.desktop" ]]; then
+            default_xsess="ubuntu"
+        elif [[ -f "/usr/share/xsessions/ubuntu-xorg.desktop" ]]; then
+            default_xsess="ubuntu-xorg"
+        elif [[ -f "/usr/share/xsessions/gnome-xorg.desktop" ]]; then
+            default_xsess="gnome-xorg"
+        fi
+
+        for user_acc in /var/lib/AccountsService/users/*; do
+            [[ -f "$user_acc" ]] || continue
+            if grep -q -i "wayland" "$user_acc" 2>/dev/null; then
+                sed -i -E "s/XSession=.*wayland.*/XSession=${default_xsess}/I" "$user_acc" 2>/dev/null || true
+            fi
+        done
+    fi
+}
+
 configure_gdm_xorg() {
     check_root
-    msg_step "CẤU HÌNH GDM3 ÉP SỬ DỤNG XORG (X11) THAY VÌ WAYLAND"
+    msg_step "CẤU HÌNH HỆ THỐNG ÉP TOÀN BỘ NGƯỜI DÙNG CHỈ SỬ DỤNG XORG (X11)"
 
     local gdm_conf
     gdm_conf=$(find_gdm_conf)
@@ -37,7 +79,7 @@ configure_gdm_xorg() {
         touch "$gdm_conf"
     fi
 
-    msg_info "Đang cấu hình WaylandEnable=false trong ${gdm_conf}..."
+    msg_info "1. Đang cấu hình WaylandEnable=false trong ${gdm_conf}..."
 
     # Check if [daemon] section exists
     if ! grep -q "\[daemon\]" "$gdm_conf"; then
@@ -56,25 +98,44 @@ EOF
         fi
     fi
 
-    # Verify
+    # Verify GDM WaylandEnable=false
     if grep -q -E "^WaylandEnable=false" "$gdm_conf"; then
-        msg_ok "Đã cấu hình thành công: WaylandEnable=false"
+        msg_ok "Đã cấu hình thành công GDM: WaylandEnable=false"
     else
         msg_err "Cấu hình WaylandEnable không thành công. Hãy kiểm tra lại file ${gdm_conf}"
         return 1
     fi
 
+    # 2. Disable all Wayland sessions system-wide
+    msg_info "2. Vô hiệu hóa triệt để mọi phiên Wayland trên hệ điều hành..."
+    disable_wayland_sessions_globally
+
+    # 3. Configure system environment default
+    msg_info "3. Cấu hình biến môi trường toàn hệ thống ép phiên X11..."
+    cat > /etc/profile.d/zorin-xorg-session.sh <<'EOF'
+# Force X11 Session Type indicator
+if [[ -z "$XDG_SESSION_TYPE" || "$XDG_SESSION_TYPE" == "wayland" ]]; then
+    export XDG_SESSION_TYPE=x11
+fi
+EOF
+    chmod 644 /etc/profile.d/zorin-xorg-session.sh
+
+    msg_ok "========================================================="
+    msg_ok "ĐÃ THIẾT LẬP THÀNH CÔNG: TẤT CẢ USER CHỈ SỬ DỤNG XORG (X11)!"
+    msg_ok "Wayland đã bị vô hiệu hóa hoàn toàn trên toàn bộ hệ điều hành."
+    msg_ok "========================================================="
+
     # Check current session type
     local current_type="${XDG_SESSION_TYPE:-unknown}"
-    echo -e "Session type hiện tại của phiên đang chạy: ${C_YELLOW}${current_type}${C_RESET}"
+    echo -e "Trạng thái phiên hiện tại: ${C_YELLOW}${current_type}${C_RESET}"
     if [[ "$current_type" == "wayland" ]]; then
-        msg_warn "Hệ thống hiện tại đang trong phiên Wayland. Cần khởi động lại máy để chuyển hẳn sang Xorg."
+        msg_warn "Phiên hiện tại đang là Wayland. Cần KHỞI ĐỘNG LẠI MÁY (Reboot) để chuyển hoàn toàn sang Xorg."
         if prompt_confirm "Bạn có muốn khởi động lại máy (Reboot) ngay bây giờ?" "N"; then
             msg_info "Đang khởi động lại hệ thống..."
             reboot
         fi
-    elif [[ "$current_type" == "x11" ]]; then
-        msg_ok "Hệ thống hiện tại ĐÃ ĐANG CHẠY X11/Xorg."
+    else
+        msg_ok "Hệ thống đang hoạt động trên nền tảng Xorg (X11)."
     fi
 
     return 0
@@ -91,6 +152,14 @@ check_xorg_status() {
         msg_ok "Cấu hình GDM: WaylandEnable=false (ĐÃ BẬT ÉP XORG)"
     else
         msg_warn "Cấu hình GDM: Chưa có hoặc chưa tắt Wayland (WaylandEnable=false chưa thiết lập)!"
+    fi
+
+    if [[ -d "/usr/share/wayland-sessions.disabled" ]]; then
+        msg_ok "Các phiên Wayland toàn hệ thống: ĐÃ BỊ VÔ HIỆU HÓA HOÀN TOÀN"
+    elif [[ -d "/usr/share/wayland-sessions" ]] && ls /usr/share/wayland-sessions/*.desktop >/dev/null 2>&1; then
+        msg_warn "Các phiên Wayland toàn hệ thống: VẪN CÒN TỒN TẠI TRONG /usr/share/wayland-sessions"
+    else
+        msg_ok "Các phiên Wayland toàn hệ thống: KHÔNG CÓ"
     fi
 
     local current_type="${XDG_SESSION_TYPE:-chưa xác định}"

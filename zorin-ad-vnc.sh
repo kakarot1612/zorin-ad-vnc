@@ -174,27 +174,27 @@ automated_quick_setup() {
     create_full_backup
 
     # Step 1: Join AD (includes package installation & DNS check & interactive credentials)
-    msg_step "[BƯỚC 1/6] THAM GIA ACTIVE DIRECTORY"
+    msg_step "[BƯỚC 1/8] THAM GIA ACTIVE DIRECTORY"
     if ! join_active_directory; then
         msg_err "Join AD thất bại. Dừng quy trình thiết lập tự động."
         return 1
     fi
 
     # Step 2: Configure SSSD & Name Resolution
-    msg_step "[BƯỚC 2/7] CẤU HÌNH SSSD VÀ PHÂN GIẢI TÊN MÁY WINDOWS"
+    msg_step "[BƯỚC 2/8] CẤU HÌNH SSSD VÀ PHÂN GIẢI TÊN MÁY WINDOWS"
     configure_sssd
     configure_windows_name_resolution "bestpacific.com"
 
     # Step 3: Configure PAM
-    msg_step "[BƯỚC 3/7] CẤU HÌNH PAM VÀ HOME DIRECTORY"
+    msg_step "[BƯỚC 3/8] CẤU HÌNH PAM VÀ HOME DIRECTORY"
     configure_pam_mkhomedir
 
     # Step 4: Configure GDM & Xorg
-    msg_step "[BƯỚC 4/6] CẤU HÌNH GDM ÉP XORG"
+    msg_step "[BƯỚC 4/8] CẤU HÌNH ÉP TẤT CẢ USER CHỈ SỬ DỤNG XORG (TẮT HOÀN TOÀN WAYLAND)"
     configure_gdm_xorg
 
     # Step 5: Install & Configure x11vnc
-    msg_step "[BƯỚC 5/7] THIẾT LẬP X11VNC & MẬT KHẨU KẾT NỐI"
+    msg_step "[BƯỚC 5/8] THIẾT LẬP X11VNC & MẬT KHẨU KẾT NỐI"
     install_x11vnc
     setup_vnc_password
     install_vnc_systemd_service
@@ -238,7 +238,7 @@ main_menu() {
         echo -e " ${C_GREEN}[3]${C_RESET}  Cài đặt các gói phụ thuộc hệ thống (AD / SSSD / VNC / CUPS / SMB)"
         echo -e " ${C_GREEN}[4]${C_RESET}  Gia nhập Active Directory (Join AD - Nhập user/pass AD Admin)"
         echo -e " ${C_GREEN}[5]${C_RESET}  Cấu hình xác thực SSSD & Tự tạo thư mục Home (PAM mkhomedir)"
-        echo -e " ${C_GREEN}[6]${C_RESET}  Cấu hình GDM3 ép sử dụng Xorg (Tắt Wayland bắt buộc cho VNC)"
+        echo -e " ${C_GREEN}[6]${C_RESET}  Cấu hình ép TẤT CẢ User chỉ dùng Xorg (Vô hiệu hóa hoàn toàn Wayland)"
         echo -e " ${C_DIM}------------------ ĐIỀU KHIỂN TỪ XA (REMOTE SUPPORT) ------------------${C_RESET}"
         echo -e " ${C_GREEN}[7]${C_RESET}  Cài đặt & Kích hoạt dịch vụ x11vnc (Remote Support cho mọi user)"
         echo -e " ${C_GREEN}[8]${C_RESET}  Đặt / Thay đổi mật khẩu kết nối VNC an toàn"
