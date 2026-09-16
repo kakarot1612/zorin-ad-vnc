@@ -69,8 +69,12 @@ show_system_info() {
 test_ad_user() {
     msg_step "KIỂM TRA TÀI KHOẢN NGƯỜI DÙNG ACTIVE DIRECTORY"
 
-    local user_to_test
-    prompt_with_default "Nhập tên tài khoản AD cần kiểm tra (VD: vnit024)" "vnit024" user_to_test
+    local user_to_test=""
+    while [[ -z "$user_to_test" ]]; do
+        prompt_with_default "Nhập tên tài khoản AD cần kiểm tra" "" user_to_test
+        user_to_test=$(echo "$user_to_test" | tr -d '[:space:]')
+        [[ -z "$user_to_test" ]] && msg_warn "Tên tài khoản không được để trống!"
+    done
 
     msg_info "1. Tra cứu thông tin tài khoản: id ${user_to_test}..."
     if id "$user_to_test" 2>&1; then
@@ -96,8 +100,15 @@ test_ad_user() {
         prompt_secure_password "Nhập mật khẩu cho tài khoản AD [${user_to_test}]" user_pass false
         
         local domain
-        domain=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
-        domain="${domain:-bestpacific.com}"
+        domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+        if [[ -z "$domain" && -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+            # shellcheck disable=SC1091
+            source /etc/zorin-ad-vnc/ad_dc.conf
+            domain="${DOMAIN}"
+        fi
+        if [[ -z "$domain" ]]; then
+            prompt_with_default "Nhập tên AD Domain" "" domain
+        fi
         local upn="${user_to_test}@${domain^^}"
 
         msg_info "Đang kiểm tra kinit ${upn}..."
@@ -183,7 +194,7 @@ automated_quick_setup() {
     # Step 2: Configure SSSD & Name Resolution
     msg_step "[BƯỚC 2/7] CẤU HÌNH SSSD VÀ PHÂN GIẢI TÊN MÁY WINDOWS"
     configure_sssd
-    configure_windows_name_resolution "bestpacific.com"
+    configure_windows_name_resolution ""
 
     # Step 3: Configure PAM
     msg_step "[BƯỚC 3/7] CẤU HÌNH PAM VÀ HOME DIRECTORY"
@@ -230,7 +241,7 @@ main_menu() {
         clear || true
         echo -e "${C_BOLD}${C_BLUE}================================================================${C_RESET}"
         echo -e "${C_BOLD}${C_WHITE}       ZORIN OS AD JOIN & ENTERPRISE MANAGEMENT TOOL            ${C_RESET}"
-        echo -e "${C_DIM}           Hỗ trợ AD Domain: bestpacific.com | OS: Zorin OS      ${C_RESET}"
+        echo -e "${C_DIM}              Enterprise AD & VNC Management Tool | Zorin OS       ${C_RESET}"
         echo -e "${C_BOLD}${C_BLUE}================================================================${C_RESET}"
         echo -e " ${C_CYAN}${C_BOLD}[1]  Thiết lập tự động toàn diện cho máy mới (All-in-One Quick Setup)${C_RESET}"
         echo -e " ${C_DIM}------------------- GIA NHẬP VÀ CẤU HÌNH DOMAIN AD -------------------${C_RESET}"

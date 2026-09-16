@@ -195,7 +195,7 @@ apply_bamboo_to_existing_users() {
 
         # Skip non-user directories or root
         if ! id "$user_name" >/dev/null 2>&1; then
-            # If domain user folder like vnit024@bestpacific.com
+            # If domain user folder like user@domain.com
             local short_user
             short_user=$(echo "$user_name" | cut -d@ -f1)
             if id "$short_user" >/dev/null 2>&1; then

@@ -36,16 +36,28 @@ configure_sssd() {
     if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
         # shellcheck disable=SC1091
         source /etc/zorin-ad-vnc/ad_dc.conf
-        domain="${DOMAIN:-bestpacific.com}"
-        dc1="${DC1:-10.0.60.19}"
-        dc2="${DC2:-10.0.60.20}"
+        domain="${DOMAIN}"
+        dc1="${DC1}"
+        dc2="${DC2}"
     fi
 
     local current_realm
     current_realm=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
-    prompt_with_default "Tên Active Directory Domain" "${domain:-${current_realm:-bestpacific.com}}" domain
-    prompt_with_default "IP Domain Controller chính (Site cục bộ)" "${dc1:-10.0.60.19}" dc1
-    prompt_with_default "IP Domain Controller phụ (Site cục bộ - Enter để bỏ qua)" "${dc2:-10.0.60.20}" dc2
+    local default_domain="${domain:-${current_realm}}"
+    prompt_with_default "Tên Active Directory Domain" "$default_domain" domain
+    while [[ -z "$domain" ]]; do
+        prompt_with_default "Tên Active Directory Domain" "" domain
+        domain=$(echo "$domain" | tr -d '[:space:]')
+    done
+
+    prompt_with_default "IP Domain Controller chính (Site cục bộ)" "$dc1" dc1
+    while [[ -z "$dc1" ]]; do
+        prompt_with_default "IP Domain Controller chính (Site cục bộ)" "" dc1
+        dc1=$(echo "$dc1" | tr -d '[:space:]')
+    done
+
+    prompt_with_default "IP Domain Controller phụ (Site cục bộ - Enter để bỏ qua)" "$dc2" dc2
+    dc2=$(echo "$dc2" | tr -d '[:space:]')
 
     local ad_servers="$dc1"
     [[ -n "$dc2" ]] && ad_servers="${dc1}, ${dc2}"
@@ -198,7 +210,14 @@ register_ad_dns_and_netbios() {
     current_host=$(hostname -s)
     local domain
     domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
-    domain="${domain:-bestpacific.com}"
+    if [[ -z "$domain" && -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        domain="${DOMAIN}"
+    fi
+    if [[ -z "$domain" ]]; then
+        prompt_with_default "Nhập tên AD Domain để đăng ký DNS" "" domain
+    fi
     local fqdn="${current_host}.${domain}"
     local current_ip
     current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
@@ -208,13 +227,12 @@ register_ad_dns_and_netbios() {
     echo -e "Domain AD     : ${C_YELLOW}${domain}${C_RESET}"
     echo "--------------------------------------------------------"
 
-    # Determine Local Domain Controller / DNS Server (Avoid connecting to remote 10.0.68.x across WAN)
+    # Determine Local Domain Controller / DNS Server (Avoid connecting to remote WAN DCs)
     local local_dc=""
     if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
         # shellcheck disable=SC1091
         source /etc/zorin-ad-vnc/ad_dc.conf
         local_dc="${DC1}"
-        domain="${DOMAIN:-$domain}"
     fi
 
     if [[ -z "$local_dc" ]]; then
@@ -231,13 +249,11 @@ register_ad_dns_and_netbios() {
     fi
 
     if [[ -z "$local_dc" ]]; then
-        if check_port_open "10.0.60.19" 53 2; then
-            local_dc="10.0.60.19"
-        elif check_port_open "10.0.60.20" 53 2; then
-            local_dc="10.0.60.20"
-        fi
+        while [[ -z "$local_dc" ]]; do
+            prompt_with_default "Nhập IP Domain Controller cục bộ để đăng ký DNS" "" local_dc
+            local_dc=$(echo "$local_dc" | tr -d '[:space:]')
+        done
     fi
-    local_dc="${local_dc:-10.0.60.19}"
     msg_info "Máy chủ DNS / Domain Controller cục bộ: ${C_GREEN}${local_dc}${C_RESET}"
 
     # 1. Update SSSD with dyndns_update and local dyndns_server

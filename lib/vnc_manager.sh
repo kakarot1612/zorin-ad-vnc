@@ -106,7 +106,7 @@ install_vnc_systemd_service() {
     cat > "$unit_file" <<EOF
 [Unit]
 Description=Zorin OS Dynamic X11VNC Session Daemon
-Documentation=https://github.com/vnit/zorin-ad-vnc
+Documentation=https://github.com/kakarot1612/zorin-ad-vnc
 After=network.target gdm.service sssd.service
 Wants=gdm.service
 

@@ -80,10 +80,10 @@ leave_active_directory() {
         return 0
     fi
 
-    local admin_user
-    prompt_with_default "Tài khoản AD Administrator để leave (hoặc để trống nếu force)" "Administrator" admin_user
+    local admin_user=""
+    prompt_with_default "Tài khoản quản trị AD để rời domain (Enter để bỏ qua nếu dùng force)" "" admin_user
     local admin_pass=""
-    prompt_secure_password "Nhập mật khẩu cho ${admin_user} (Enter để bỏ qua mật khẩu)" admin_pass false
+    prompt_secure_password "Nhập mật khẩu cho tài khoản quản trị (Enter để bỏ qua nếu dùng force)" admin_pass false
 
     # Sanitize admin_user: strip DOMAIN\ or DOMAIN/ prefix and @DOMAIN suffix
     local clean_admin_user="$admin_user"
@@ -127,17 +127,33 @@ join_active_directory() {
         leave_active_directory
     fi
 
-    # 3. Interactive Inputs (User & Password manually entered)
-    local domain
-    local dc1
-    local dc2
-    local admin_user
-    local admin_pass
+    # 3. Interactive Inputs (All values are entered dynamically by the user - no hardcoded defaults)
+    local domain=""
+    local dc1=""
+    local dc2=""
+    local admin_user=""
+    local admin_pass=""
 
-    prompt_with_default "Nhập AD Domain FQDN" "bestpacific.com" domain
-    prompt_with_default "Nhập IP AD Domain Controller 1 (Site cục bộ)" "10.0.60.19" dc1
-    prompt_with_default "Nhập IP AD Domain Controller 2 (Site cục bộ)" "10.0.60.20" dc2
-    prompt_with_default "Nhập tên tài khoản AD Administrator" "Administrator" admin_user
+    while [[ -z "$domain" ]]; do
+        prompt_with_default "Nhập AD Domain FQDN" "" domain
+        domain=$(echo "$domain" | tr -d '[:space:]')
+        [[ -z "$domain" ]] && msg_warn "AD Domain FQDN không được để trống!"
+    done
+
+    while [[ -z "$dc1" ]]; do
+        prompt_with_default "Nhập IP AD Domain Controller chính (Site cục bộ)" "" dc1
+        dc1=$(echo "$dc1" | tr -d '[:space:]')
+        [[ -z "$dc1" ]] && msg_warn "IP Domain Controller chính không được để trống!"
+    done
+
+    prompt_with_default "Nhập IP AD Domain Controller phụ (Tùy chọn - Enter nếu không có)" "" dc2
+    dc2=$(echo "$dc2" | tr -d '[:space:]')
+
+    while [[ -z "$admin_user" ]]; do
+        prompt_with_default "Nhập tên tài khoản quản trị AD để Join" "" admin_user
+        admin_user=$(echo "$admin_user" | tr -d '[:space:]')
+        [[ -z "$admin_user" ]] && msg_warn "Tài khoản quản trị không được để trống!"
+    done
     
     # Prompt password securely - hidden characters, no logging
     prompt_secure_password "Nhập mật khẩu cho tài khoản AD [${admin_user}]" admin_pass false
@@ -162,7 +178,7 @@ DC2=${dc2}
 EOF
 
     # 6. Pre-configure /etc/krb5.conf to PIN KDC strictly to DC1 (and DC2)
-    # This prevents Kerberos from doing DNS SRV lookups and hitting off-site WAN DCs (e.g. 10.0.193.x / 10.0.68.x)
+    # This prevents Kerberos from doing DNS SRV lookups and hitting off-site WAN DCs
     msg_info "Ghim cấu hình Kerberos KDC trực tiếp vào Domain Controller [${dc1}]..."
     cat > /etc/krb5.conf <<EOF
 [libdefaults]

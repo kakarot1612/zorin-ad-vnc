@@ -204,7 +204,15 @@ normalize_ad_user_and_domain() {
     local out_domain_var="$4"
 
     local parsed_user="$raw_input"
-    local parsed_domain="${default_domain:-bestpacific.com}"
+    local parsed_domain="$default_domain"
+    if [[ -z "$parsed_domain" && -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        parsed_domain="${DOMAIN}"
+    fi
+    if [[ -z "$parsed_domain" ]] && command -v realm >/dev/null 2>&1; then
+        parsed_domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+    fi
 
     if [[ "$raw_input" == *"@"* ]]; then
         parsed_user="${raw_input%%@*}"
@@ -221,7 +229,7 @@ normalize_ad_user_and_domain() {
     eval "$out_domain_var=\"$parsed_domain\""
 }
 
-# Get AD NetBIOS workgroup name (e.g. BESTPACIFIC from bestpacific.com)
+# Get AD NetBIOS workgroup name (e.g. WORKGROUP from domain.com)
 get_ad_workgroup() {
     local domain="$1"
     local wg=""
@@ -280,15 +288,23 @@ check_host_ping_and_resolve() {
             resolved_ip=$(host "$target" 2>/dev/null | awk '/has address/ {print $NF}' | head -n 1)
         fi
 
-        # 2. Try with Domain Suffix if target is a short name (VD: vn-printersrv -> vn-printersrv.bestpacific.com)
+        # 2. Try with Domain Suffix if target is a short name (VD: server -> server.domain)
         if [[ -z "$resolved_ip" && "$target" != *"."* ]]; then
-            local domain_suffix
-            domain_suffix=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
-            domain_suffix="${domain_suffix:-bestpacific.com}"
-            msg_info "Thử phân giải với Domain Suffix [${target}.${domain_suffix}]..."
-            resolved_ip=$(getent ahosts "${target}.${domain_suffix}" 2>/dev/null | awk '{print $1}' | head -n 1)
-            if [[ -z "$resolved_ip" ]]; then
-                resolved_ip=$(host "${target}.${domain_suffix}" 2>/dev/null | awk '/has address/ {print $NF}' | head -n 1)
+            local domain_suffix=""
+            if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+                # shellcheck disable=SC1091
+                source /etc/zorin-ad-vnc/ad_dc.conf
+                domain_suffix="${DOMAIN}"
+            fi
+            if [[ -z "$domain_suffix" ]] && command -v realm >/dev/null 2>&1; then
+                domain_suffix=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+            fi
+            if [[ -n "$domain_suffix" ]]; then
+                msg_info "Thử phân giải với Domain Suffix [${target}.${domain_suffix}]..."
+                resolved_ip=$(getent ahosts "${target}.${domain_suffix}" 2>/dev/null | awk '{print $1}' | head -n 1)
+                if [[ -z "$resolved_ip" ]]; then
+                    resolved_ip=$(host "${target}.${domain_suffix}" 2>/dev/null | awk '/has address/ {print $NF}' | head -n 1)
+                fi
             fi
         fi
 

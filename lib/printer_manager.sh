@@ -262,7 +262,7 @@ add_network_printer_ip() {
     install_printer_dependencies || return 1
 
     local printer_input
-    prompt_with_default "Nhập địa chỉ IP hoặc Hostname của Máy In (VD: 10.0.60.50 hoặc printer-it)" "" printer_input
+    prompt_with_default "Nhập địa chỉ IP hoặc Hostname của Máy In (VD: 192.168.1.50 hoặc printer-name)" "" printer_input
 
     if [[ -z "$printer_input" ]]; then
         msg_err "LỖI: Địa chỉ IP / Hostname máy in không được để trống."
@@ -347,7 +347,7 @@ browse_and_select_smb_printer() {
     if [[ "$smb_out" =~ "NT_STATUS_ACCESS_DENIED" ]] || [[ "$smb_out" =~ "NT_STATUS_LOGON_FAILURE" ]] || [[ ! "$smb_out" =~ "Printer" ]]; then
         msg_info "Server yêu cầu xác thực tài khoản để xem danh sách máy in."
         local raw_ad_user
-        prompt_with_default "Tài khoản duyệt danh sách (User cá nhân thông thường, VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_ad_user
+        prompt_with_default "Tài khoản duyệt danh sách (User cá nhân thông thường, VD: username hoặc user@domain.com)" "${SUDO_USER:-$USER}" raw_ad_user
         local clean_ad_user clean_ad_domain
         normalize_ad_user_and_domain "$raw_ad_user" "$domain" clean_ad_user clean_ad_domain
 
@@ -444,9 +444,15 @@ add_windows_shared_printer() {
     local server_ip=""
     check_host_ping_and_resolve "$print_server" "Windows Print Server" server_ip || return 1
 
-    local domain
-    domain=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
-    domain="${domain:-bestpacific.com}"
+    local domain=""
+    if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        domain="${DOMAIN}"
+    fi
+    if [[ -z "$domain" ]] && command -v realm >/dev/null 2>&1; then
+        domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+    fi
 
     local share_printer_name=""
     local auth_user=""
@@ -487,12 +493,12 @@ add_windows_shared_printer() {
     local retry_count=0
     local max_retries=3
 
-    local default_admin="BESTPACIFIC\\Administrator"
+    local default_admin=""
 
     while [[ $retry_count -lt $max_retries ]]; do
         echo -e "${C_BOLD}Nhập tài khoản có quyền cài đặt máy in:${C_RESET}"
-        echo -e "  - Định dạng AD Admin : ${C_GREEN}domain\\user${C_RESET} (VD: BESTPACIFIC\\Administrator)"
-        echo -e "    hoặc               : ${C_GREEN}user@domain${C_RESET} (VD: Administrator@bestpacific.com)"
+        echo -e "  - Định dạng AD Admin : ${C_GREEN}domain\\user${C_RESET} (VD: DOMAIN\\admin_user)"
+        echo -e "    hoặc               : ${C_GREEN}user@domain${C_RESET} (VD: admin_user@domain.com)"
         echo -e "  - Định dạng Local    : ${C_GREEN}root${C_RESET}"
 
         prompt_with_default "Tài khoản cài đặt [hoặc 'q' để hủy]" "$default_admin" auth_user_input
@@ -513,7 +519,7 @@ add_windows_shared_printer() {
             msg_err "========================================================="
             msg_err "LỖI ĐỊNH DẠNG: Tài khoản '${auth_user_input}' không hợp lệ!"
             msg_err "Bắt buộc phải là 'root' hoặc đúng định dạng 'domain\\user' / 'user@domain'."
-            msg_warn "Ví dụ đúng: BESTPACIFIC\\Administrator hoặc Administrator@bestpacific.com"
+            msg_warn "Ví dụ đúng: DOMAIN\\admin_user hoặc admin_user@domain.com"
             msg_err "========================================================="
             retry_count=$((retry_count + 1))
             continue

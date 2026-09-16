@@ -27,14 +27,26 @@ format_status() {
 
 run_health_check() {
     local domain="$1"
-    local dc1="${2:-10.0.60.19}"
-    local dc2="${3:-10.0.60.20}"
+    local dc1="$2"
+    local dc2="$3"
     local test_user="$4"
 
-    # Auto detect domain if not supplied
+    # Auto detect domain & DCs from persistent config if not supplied
+    if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        [[ -z "$domain" ]] && domain="${DOMAIN}"
+        [[ -z "$dc1" ]] && dc1="${DC1}"
+        [[ -z "$dc2" ]] && dc2="${DC2}"
+    fi
+
+    # Read from realm list or sssd.conf if still empty
     if [[ -z "$domain" ]]; then
-        domain=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
-        domain="${domain:-bestpacific.com}"
+        domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+    fi
+    if [[ -z "$dc1" && -f /etc/sssd/sssd.conf ]]; then
+        dc1=$(grep -E '^[[:space:]]*ad_server' /etc/sssd/sssd.conf | cut -d= -f2 | awk -F, '{print $1}' | tr -d '[:space:]')
+        dc2=$(grep -E '^[[:space:]]*ad_server' /etc/sssd/sssd.conf | cut -d= -f2 | awk -F, '{print $2}' | tr -d '[:space:]')
     fi
 
     echo ""
@@ -42,36 +54,48 @@ run_health_check() {
     echo "======================================================================"
 
     # 1. DNS
-    if getent hosts "$domain" >/dev/null 2>&1; then
-        format_status "DNS Resolution (${domain})" "OK" "true"
+    if [[ -n "$domain" ]]; then
+        if getent hosts "$domain" >/dev/null 2>&1; then
+            format_status "DNS Resolution (${domain})" "OK" "true"
+        else
+            format_status "DNS Resolution (${domain})" "FAILED" "false"
+        fi
     else
-        format_status "DNS Resolution (${domain})" "FAILED" "false"
+        format_status "DNS Resolution" "NO DOMAIN SET" "warn"
     fi
 
     # 2. AD1 Reachable
-    if check_port_open "$dc1" 389 2; then
-        format_status "AD1 Reachable (${dc1})" "OK" "true"
-    else
-        format_status "AD1 Reachable (${dc1})" "UNREACHABLE" "false"
+    if [[ -n "$dc1" ]]; then
+        if check_port_open "$dc1" 389 2; then
+            format_status "AD1 Reachable (${dc1})" "OK" "true"
+        else
+            format_status "AD1 Reachable (${dc1})" "UNREACHABLE" "false"
+        fi
     fi
 
     # 3. AD2 Reachable
-    if check_port_open "$dc2" 389 2; then
-        format_status "AD2 Reachable (${dc2})" "OK" "true"
-    else
-        format_status "AD2 Reachable (${dc2})" "UNREACHABLE" "warn"
+    if [[ -n "$dc2" ]]; then
+        if check_port_open "$dc2" 389 2; then
+            format_status "AD2 Reachable (${dc2})" "OK" "true"
+        else
+            format_status "AD2 Reachable (${dc2})" "UNREACHABLE" "warn"
+        fi
     fi
 
     # 4. Kerberos (Port 88 on DC1 or DC2)
-    if check_port_open "$dc1" 88 2 || check_port_open "$dc2" 88 2; then
-        format_status "Kerberos KDC (Port 88)" "OK" "true"
+    if [[ -n "$dc1" ]] && check_port_open "$dc1" 88 2; then
+        format_status "Kerberos KDC (Port 88)" "OK (${dc1})" "true"
+    elif [[ -n "$dc2" ]] && check_port_open "$dc2" 88 2; then
+        format_status "Kerberos KDC (Port 88)" "OK (${dc2})" "true"
+    elif [[ -z "$dc1" ]]; then
+        format_status "Kerberos KDC (Port 88)" "NOT CONFIGURED" "warn"
     else
         format_status "Kerberos KDC (Port 88)" "FAILED" "false"
     fi
 
     # 5. Realm Joined
     local realm_status
-    realm_status=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
+    realm_status=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
     if [[ -n "$realm_status" ]]; then
         format_status "Realm Domain Joined" "OK (${realm_status})" "true"
     else
@@ -86,11 +110,16 @@ run_health_check() {
     fi
 
     # 7. AD User Lookup
-    local test_lookup_user="${test_user:-vnit024}"
-    if getent passwd "$test_lookup_user" >/dev/null 2>&1; then
-        format_status "AD User Lookup (${test_lookup_user})" "OK" "true"
-    else
-        format_status "AD User Lookup (${test_lookup_user})" "NOT FOUND" "warn"
+    local test_lookup_user="$test_user"
+    if [[ -z "$test_lookup_user" ]] && command -v loginctl >/dev/null 2>&1; then
+        test_lookup_user=$(loginctl list-users --no-legend 2>/dev/null | awk '$2 != "gdm" && $2 != "Debian-gdm" && $2 != "root" {print $2; exit}')
+    fi
+    if [[ -n "$test_lookup_user" ]]; then
+        if getent passwd "$test_lookup_user" >/dev/null 2>&1; then
+            format_status "AD User Lookup (${test_lookup_user})" "OK" "true"
+        else
+            format_status "AD User Lookup (${test_lookup_user})" "NOT FOUND" "warn"
+        fi
     fi
 
     # 8. PAM mkhomedir

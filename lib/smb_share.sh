@@ -43,8 +43,8 @@ list_smb_shares_on_server() {
     check_root
     msg_step "TRA CỨU DANH SÁCH THƯ MỤC CHIA SẺ TRÊN SERVER (SMB BROWSE)"
 
-    local server_host
-    prompt_with_default "Nhập IP hoặc Hostname của File Server" "10.0.60.30" server_host
+    local server_host=""
+    prompt_with_default "Nhập IP hoặc Hostname của File Server" "" server_host
 
     if [[ -z "$server_host" ]]; then
         msg_err "Địa chỉ server không được để trống."
@@ -56,9 +56,15 @@ list_smb_shares_on_server() {
 
     install_smb_dependencies || return 1
 
-    local domain
-    domain=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
-    domain="${domain:-bestpacific.com}"
+    local domain=""
+    if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        domain="${DOMAIN}"
+    fi
+    if [[ -z "$domain" ]] && command -v realm >/dev/null 2>&1; then
+        domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+    fi
 
     echo ""
     echo "1) Sử dụng tài khoản Domain Administrator hoặc tài khoản AD cá nhân"
@@ -88,7 +94,7 @@ list_smb_shares_on_server() {
     else
         echo ""
         local raw_user
-        prompt_with_default "Tài khoản (VD: tom hoặc tom@bestpacific.com)" "${SUDO_USER:-$USER}" raw_user
+        prompt_with_default "Tài khoản (VD: username hoặc user@domain.com)" "${SUDO_USER:-$USER}" raw_user
         local clean_user clean_domain
         normalize_ad_user_and_domain "$raw_user" "$domain" clean_user clean_domain
 
@@ -144,7 +150,7 @@ list_smb_shares_on_server() {
             msg_err "Xác thực không thành công (NT_STATUS_LOGON_FAILURE)."
             echo -e "${C_YELLOW}Gợi ý kiểm tra:${C_RESET}"
             echo -e "  1. Kiểm tra lại mật khẩu (chú ý phím Caps Lock / bộ gõ tiếng Việt)."
-            echo -e "  2. Tài khoản ${clean_user} trên server 10.0.60.30 là tài khoản Domain hay tài khoản Local của riêng máy đó?"
+            echo -e "  2. Tài khoản ${clean_user} trên server ${server_host} là tài khoản Domain hay tài khoản Local của riêng máy đó?"
             echo -e "  3. Kiểm tra xem tài khoản có bị khóa (Account locked) hoặc hết hạn trên AD không."
         fi
     fi
@@ -158,7 +164,7 @@ mount_smb_share() {
 
     local server_host=""
     while [[ -z "$server_host" ]]; do
-        prompt_with_default "Nhập IP hoặc Hostname của File Server" "10.0.60.30" server_host
+        prompt_with_default "Nhập IP hoặc Hostname của File Server" "" server_host
         if [[ -z "$server_host" ]]; then
             msg_warn "Địa chỉ server không được để trống. Vui lòng nhập lại."
         fi
@@ -192,9 +198,15 @@ mount_smb_share() {
 
     mkdir -p "$mount_point"
 
-    local domain
-    domain=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
-    domain="${domain:-bestpacific.com}"
+    local domain=""
+    if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        domain="${DOMAIN}"
+    fi
+    if [[ -z "$domain" ]] && command -v realm >/dev/null 2>&1; then
+        domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+    fi
 
     local target_user
     prompt_with_default "Tài khoản Zorin/AD cục bộ sẽ sở hữu thư mục mount" "${SUDO_USER:-$USER}" target_user
@@ -344,11 +356,11 @@ create_desktop_share_shortcut() {
 
     install_smb_dependencies || return 1
 
-    local server_host
-    prompt_with_default "Nhập IP hoặc Hostname của File Server" "10.0.60.30" server_host
+    local server_host=""
+    prompt_with_default "Nhập IP hoặc Hostname của File Server" "" server_host
 
-    local share_name
-    prompt_with_default "Nhập Tên Thư Mục Chia Sẻ" "BPVN-Fileserver" share_name
+    local share_name=""
+    prompt_with_default "Nhập Tên Thư Mục Chia Sẻ" "" share_name
 
     local smb_url="smb://${server_host}/${share_name}"
 

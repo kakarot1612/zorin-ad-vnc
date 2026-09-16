@@ -31,13 +31,22 @@ run_dns_ad_check() {
     local dc2="$3"
 
     if [[ -z "$domain" ]]; then
-        prompt_with_default "Nhập tên AD Domain cần kiểm tra" "bestpacific.com" domain
+        while [[ -z "$domain" ]]; do
+            prompt_with_default "Nhập tên AD Domain cần kiểm tra" "" domain
+            domain=$(echo "$domain" | tr -d '[:space:]')
+            [[ -z "$domain" ]] && msg_warn "Tên AD Domain không được để trống!"
+        done
     fi
     if [[ -z "$dc1" ]]; then
-        prompt_with_default "Nhập IP AD Domain Controller 1" "10.0.60.19" dc1
+        while [[ -z "$dc1" ]]; do
+            prompt_with_default "Nhập IP AD Domain Controller chính" "" dc1
+            dc1=$(echo "$dc1" | tr -d '[:space:]')
+            [[ -z "$dc1" ]] && msg_warn "IP Domain Controller không được để trống!"
+        done
     fi
     if [[ -z "$dc2" ]]; then
-        prompt_with_default "Nhập IP AD Domain Controller 2" "10.0.60.20" dc2
+        prompt_with_default "Nhập IP AD Domain Controller phụ (Tùy chọn - Enter nếu không có)" "" dc2
+        dc2=$(echo "$dc2" | tr -d '[:space:]')
     fi
 
     msg_step "BẮT ĐẦU KIỂM TRA DNS VÀ KẾT NỐI ACTIVE DIRECTORY"
@@ -132,9 +141,16 @@ configure_windows_name_resolution() {
     msg_step "CẤU HÌNH PHÂN GIẢI TÊN MÁY TÍNH WINDOWS (NETBIOS / WINS / DNS SEARCH)"
 
     local domain="$1"
+    if [[ -z "$domain" && -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        domain="${DOMAIN}"
+    fi
     if [[ -z "$domain" ]]; then
         domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
-        domain="${domain:-bestpacific.com}"
+    fi
+    if [[ -z "$domain" ]]; then
+        prompt_with_default "Nhập tên AD Domain để cấu hình phân giải tên" "" domain
     fi
 
     msg_info "1. Cấu hình DNS Search Domain [${domain}] cho systemd-resolved..."

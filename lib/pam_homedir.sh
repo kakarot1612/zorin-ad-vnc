@@ -49,7 +49,7 @@ repair_user_home_dir() {
 
     local target_user="$1"
     if [[ -z "$target_user" ]]; then
-        prompt_with_default "Nhập tên tài khoản AD cần kiểm tra/sửa (VD: vnit024)" "" target_user
+        prompt_with_default "Nhập tên tài khoản AD cần kiểm tra/sửa (VD: username)" "" target_user
     fi
 
     if [[ -z "$target_user" ]]; then
