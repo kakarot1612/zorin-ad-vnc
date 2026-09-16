@@ -177,18 +177,45 @@ register_ad_dns_and_netbios() {
     echo -e "Domain AD     : ${C_YELLOW}${domain}${C_RESET}"
     echo "--------------------------------------------------------"
 
-    # 1. Update SSSD with dyndns_update
+    # Determine Local Domain Controller / DNS Server (Avoid connecting to remote 10.0.68.x across WAN)
+    local local_dc=""
+    local ns_candidates=()
+    if [[ -f /etc/resolv.conf ]]; then
+        mapfile -t ns_candidates < <(grep -E '^nameserver' /etc/resolv.conf | awk '{print $2}' | grep -v '127.0.0.53')
+    fi
+    for ns in "${ns_candidates[@]}"; do
+        if check_port_open "$ns" 53 2; then
+            local_dc="$ns"
+            break
+        fi
+    done
+    if [[ -z "$local_dc" ]]; then
+        if check_port_open "10.0.60.19" 53 2; then
+            local_dc="10.0.60.19"
+        elif check_port_open "10.0.60.20" 53 2; then
+            local_dc="10.0.60.20"
+        fi
+    fi
+    local_dc="${local_dc:-10.0.60.19}"
+    msg_info "Máy chủ DNS / Domain Controller cục bộ: ${C_GREEN}${local_dc}${C_RESET}"
+
+    # 1. Update SSSD with dyndns_update and local dyndns_server
     if [[ -f "$SSSD_CONF" ]]; then
-        msg_info "1. Bật tính năng Dynamic DNS (dyndns_update) trong SSSD..."
+        msg_info "1. Bật tính năng Dynamic DNS (dyndns_update) trong SSSD với DC cục bộ [${local_dc}]..."
         if ! grep -q "dyndns_update" "$SSSD_CONF"; then
-            sed -i "/\[domain\/${domain}\]/a dyndns_update = True\ndyndns_refresh_interval = 14400\ndyndns_update_ptr = True\ndyndns_ttl = 3600" "$SSSD_CONF" 2>/dev/null || true
+            sed -i "/\[domain\/${domain}\]/a dyndns_update = True\ndyndns_server = ${local_dc}\ndyndns_refresh_interval = 14400\ndyndns_update_ptr = True\ndyndns_ttl = 3600" "$SSSD_CONF" 2>/dev/null || true
         else
             sed -i "s/dyndns_update = .*/dyndns_update = True/" "$SSSD_CONF" 2>/dev/null || true
+            if ! grep -q "dyndns_server" "$SSSD_CONF"; then
+                sed -i "/dyndns_update = True/a dyndns_server = ${local_dc}" "$SSSD_CONF" 2>/dev/null || true
+            else
+                sed -i "s/dyndns_server = .*/dyndns_server = ${local_dc}/" "$SSSD_CONF" 2>/dev/null || true
+            fi
         fi
         chmod 600 "$SSSD_CONF"
         chown root:root "$SSSD_CONF"
         systemctl restart sssd 2>/dev/null || true
-        msg_ok "Đã kích hoạt Dynamic DNS trong SSSD và khởi động lại dịch vụ."
+        msg_ok "Đã kích hoạt Dynamic DNS trong SSSD (trỏ về ${local_dc})."
     fi
 
     # 2. Configure Samba NetBIOS Name Responder (nmbd)
@@ -226,7 +253,7 @@ EOF
     systemctl restart systemd-resolved 2>/dev/null || true
 
     # 4. Perform direct Kerberos nsupdate if machine ticket exists
-    msg_info "4. Gửi yêu cầu cập nhật bản ghi DNS (RFC 2136) trực tiếp lên Domain Controller..."
+    msg_info "4. Gửi yêu cầu cập nhật bản ghi DNS (RFC 2136) trực tiếp lên Domain Controller [${local_dc}]..."
     if ! command -v nsupdate >/dev/null 2>&1; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get install -y bind9-dnsutils >/dev/null 2>&1 || apt-get install -y dnsutils >/dev/null 2>&1 || true
@@ -248,14 +275,14 @@ EOF
 
         local nsupdate_script="/tmp/nsupdate_ad.txt"
         cat > "$nsupdate_script" <<EOF
-server ${domain}
+server ${local_dc}
 update delete ${fqdn} A
 update add ${fqdn} 3600 A ${current_ip}
 send
 EOF
         if [[ -n "$ptr_record" ]]; then
             cat >> "$nsupdate_script" <<EOF
-server ${domain}
+server ${local_dc}
 update delete ${ptr_record} PTR
 update add ${ptr_record} 3600 PTR ${fqdn}.
 send
