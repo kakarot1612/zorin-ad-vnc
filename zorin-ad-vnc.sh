@@ -203,9 +203,9 @@ automated_quick_setup() {
     msg_step "[BƯỚC 6/8] CÀI ĐẶT BỘ GÕ TIẾNG VIỆT BAMBOO TOÀN HỆ THỐNG"
     setup_bamboo_system_wide
 
-    # Step 7: Install Essential Enterprise Apps (Chrome, Zalo, WeChat, UltraViewer, Chinese Fonts & Input)
-    msg_step "[BƯỚC 7/8] CÀI ĐẶT ỨNG DỤNG DOANH NGHIỆP CƠ BẢN (CHROME, ZALO, WECHAT, ULTRAVIEWER...)"
-    if prompt_confirm "Bạn có muốn cài đặt toàn bộ gói ứng dụng cơ bản (Chrome, Zalo, WeChat, UltraViewer, Font & Bộ gõ tiếng Trung)?" "Y"; then
+    # Step 7: Install Essential Enterprise Apps (Chrome, Zalo, WeChat, AnyDesk, RustDesk, Chinese Fonts & Input)
+    msg_step "[BƯỚC 7/8] CÀI ĐẶT ỨNG DỤNG DOANH NGHIỆP CƠ BẢN (CHROME, ZALO, WECHAT, ANYDESK, RUSTDESK...)"
+    if prompt_confirm "Bạn có muốn cài đặt toàn bộ gói ứng dụng cơ bản (Chrome, Zalo, WeChat, AnyDesk, RustDesk, Font & Bộ gõ tiếng Trung)?" "Y"; then
         install_all_essential_apps
     fi
 
@@ -243,7 +243,7 @@ main_menu() {
         echo -e " ${C_GREEN}[7]${C_RESET}  Cài đặt & Kích hoạt dịch vụ x11vnc (Remote Support cho mọi user)"
         echo -e " ${C_GREEN}[8]${C_RESET}  Đặt / Thay đổi mật khẩu kết nối VNC an toàn"
         echo -e " ${C_DIM}---------------- CÀI ĐẶT ỨNG DỤNG DOANH NGHIỆP & BỘ GÕ ----------------${C_RESET}"
-        echo -e " ${C_CYAN}${C_BOLD}[9]  Cài đặt Ứng dụng Cơ bản (Chrome, Zalo, WeChat, UltraViewer, Bộ gõ & Font)${C_RESET}"
+        echo -e " ${C_CYAN}${C_BOLD}[9]  Cài đặt Ứng dụng Cơ bản (Chrome, Zalo, WeChat, AnyDesk, RustDesk, Bộ gõ & Font)${C_RESET}"
         echo -e " ${C_DIM}----------------- TÀI NGUYÊN DOANH NGHIỆP & MÁY IN MẠNG -----------------${C_RESET}"
         echo -e " ${C_GREEN}[10]${C_RESET} Quản lý Thư mục chia sẻ mạng Windows (SMB/CIFS File Shares)"
         echo -e " ${C_GREEN}[11]${C_RESET} Quản lý Máy in chia sẻ qua mạng (Windows Print Server / IP CUPS)"

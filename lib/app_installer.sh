@@ -2,8 +2,9 @@
 # ==============================================================================
 # Zorin OS AD Join & Enterprise Management Tool
 # File: lib/app_installer.sh
-# Description: Install Essential Enterprise Apps (Chrome, Zalo, WeChat, UltraViewer,
-#              Chinese Input Method, Chinese Fonts, Vietnamese Bamboo, and Desktop Shortcuts).
+# Description: Install Essential Enterprise Apps (Chrome, Zalo, WeChat, AnyDesk,
+#              RustDesk, Chinese Input Method, Chinese Fonts, Vietnamese Bamboo,
+#              and Desktop Shortcuts).
 # ==============================================================================
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,24 +46,6 @@ EOF
 </svg>
 EOF
         chmod 644 /usr/share/pixmaps/wechat.svg
-    fi
-
-    # 3. UltraViewer SVG Icon
-    if [[ ! -f /usr/share/pixmaps/ultraviewer.svg ]]; then
-        cat > /usr/share/pixmaps/ultraviewer.svg <<'EOF'
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="28" fill="#FF5722"/>
-  <!-- Monitor screen -->
-  <rect x="24" y="24" width="80" height="56" rx="6" fill="#FFF"/>
-  <rect x="30" y="30" width="68" height="44" rx="4" fill="#1E88E5"/>
-  <!-- Stand -->
-  <path d="M54 80h20v14H54zM40 94h48v6H40z" fill="#FFF"/>
-  <!-- Remote Arrow inside screen -->
-  <path d="M48 44l20 10-20 10z" fill="#FFD54F"/>
-  <circle cx="76" cy="52" r="8" fill="#FFF"/>
-</svg>
-EOF
-        chmod 644 /usr/share/pixmaps/ultraviewer.svg
     fi
 }
 
@@ -183,74 +166,99 @@ EOF
     msg_ok "Cài đặt WeChat Desktop thành công! Biểu tượng đã được xuất ra màn hình."
 }
 
-install_ultraviewer() {
+install_anydesk() {
     check_root
-    msg_step "CÀI ĐẶT ĐIỀU KHIỂN TỪ XA ULTRAVIEWER (QUA WINE)"
+    msg_step "CÀI ĐẶT PHẦN MỀM ĐIỀU KHIỂN TỪ XA ANYDESK"
 
-    create_app_icons
-
-    # 1. Install Wine
-    msg_info "Kiểm tra và cài đặt Wine để chạy UltraViewer..."
-    export DEBIAN_FRONTEND=noninteractive
-    dpkg --add-architecture i386 2>/dev/null || true
-    apt-get update -qq || true
-    apt-get install -y wine wine64 winetricks wget libnotify-bin >/dev/null 2>&1 || true
-
-    # 2. Download UltraViewer installer to permanent location /opt/ultraviewer
-    mkdir -p /opt/ultraviewer
-    local uv_exe="/opt/ultraviewer/UltraViewer_setup.exe"
-    msg_info "Đang tải bộ cài đặt UltraViewer chính thức..."
-    if [[ ! -f "$uv_exe" ]]; then
-        wget -q --show-progress -O "$uv_exe" "https://ultraviewer.net/vi/UltraViewer_setup_6.6_vi.exe" || \
-        wget -q --show-progress -O "$uv_exe" "https://ultraviewer.net/en/UltraViewer_setup_6.6_en.exe" || true
+    if command -v anydesk >/dev/null 2>&1; then
+        msg_ok "AnyDesk đã được cài đặt trên hệ thống."
+        export_single_desktop_shortcut "/usr/share/applications/anydesk.desktop"
+        return 0
     fi
-    chmod 644 "$uv_exe" 2>/dev/null || true
 
-    # 3. Create persistent wrapper script
-    cat > /usr/local/bin/ultraviewer <<'EOF'
-#!/usr/bin/env bash
-# UltraViewer Multi-user Launcher for Zorin OS
-export WINEPREFIX="${HOME}/.wine"
-UV_EXE64="${WINEPREFIX}/drive_c/Program Files (x86)/UltraViewer/UltraViewer_Desktop.exe"
-UV_EXE32="${WINEPREFIX}/drive_c/Program Files/UltraViewer/UltraViewer_Desktop.exe"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq || true
+    apt-get install -y curl wget gpg libpolkit-gobject-1-0 >/dev/null 2>&1 || true
 
-if [[ -f "$UV_EXE64" ]]; then
-    exec wine "$UV_EXE64" "$@"
-elif [[ -f "$UV_EXE32" ]]; then
-    exec wine "$UV_EXE32" "$@"
-else
-    # Auto-initialize UltraViewer in user's wine prefix on first run
-    if [[ -f "/opt/ultraviewer/UltraViewer_setup.exe" ]]; then
-        notify-send "UltraViewer" "Đang khởi tạo UltraViewer lần đầu cho tài khoản..." 2>/dev/null || true
-        wine "/opt/ultraviewer/UltraViewer_setup.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART 2>/dev/null
-        sleep 2
-        if [[ -f "$UV_EXE64" ]]; then
-            exec wine "$UV_EXE64" "$@"
-        elif [[ -f "$UV_EXE32" ]]; then
-            exec wine "$UV_EXE32" "$@"
+    msg_info "Đang cấu hình kho lưu trữ chính thức AnyDesk cho Debian/Ubuntu..."
+    mkdir -p /usr/share/keyrings
+    if curl -fsSL https://keys.anydesk.com/repos/DEB-GPG-KEY | gpg --dearmor --yes -o /usr/share/keyrings/anydesk-keyring.gpg 2>/dev/null; then
+        echo "deb [signed-by=/usr/share/keyrings/anydesk-keyring.gpg] http://deb.anydesk.com/ all main" > /etc/apt/sources.list.d/anydesk-stable.list
+        apt-get update -qq || true
+        if apt-get install -y anydesk >/dev/null 2>&1; then
+            msg_ok "Cài đặt AnyDesk thành công từ kho lưu trữ chính thức!"
+            export_single_desktop_shortcut "/usr/share/applications/anydesk.desktop"
+            return 0
         fi
     fi
-fi
-EOF
-    chmod 755 /usr/local/bin/ultraviewer
 
-    # 4. Create Desktop Entry
-    cat > /usr/share/applications/ultraviewer.desktop <<EOF
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=UltraViewer
-Comment=Phần mềm điều khiển máy tính từ xa UltraViewer
-Exec=/usr/local/bin/ultraviewer
-Icon=/usr/share/pixmaps/ultraviewer.svg
-Terminal=false
-Categories=Network;RemoteAccess;Utility;
-StartupNotify=true
-EOF
-    chmod 644 /usr/share/applications/ultraviewer.desktop
+    # Fallback: Tải trực tiếp gói .deb nếu repo gặp sự cố
+    msg_info "Đang tải trực tiếp gói AnyDesk .deb chính thức..."
+    local anydesk_deb="/tmp/anydesk_amd64.deb"
+    if wget -q --show-progress -O "$anydesk_deb" "https://download.anydesk.com/linux/anydesk_6.3.3-1_amd64.deb" || \
+       wget -q --show-progress -O "$anydesk_deb" "https://download.anydesk.com/linux/anydesk_6.3.0-1_amd64.deb"; then
+        if apt-get install -y "$anydesk_deb" >/dev/null 2>&1; then
+            msg_ok "Cài đặt AnyDesk thành công!"
+            rm -f "$anydesk_deb"
+            export_single_desktop_shortcut "/usr/share/applications/anydesk.desktop"
+            return 0
+        else
+            apt-get -f install -y >/dev/null 2>&1 || true
+            msg_ok "Đã xử lý phụ thuộc và hoàn tất cài đặt AnyDesk!"
+            rm -f "$anydesk_deb"
+            export_single_desktop_shortcut "/usr/share/applications/anydesk.desktop"
+            return 0
+        fi
+    else
+        msg_err "Cài đặt AnyDesk thất bại. Vui lòng kiểm tra kết nối mạng."
+        return 1
+    fi
+}
 
-    export_single_desktop_shortcut "/usr/share/applications/ultraviewer.desktop"
-    msg_ok "Cài đặt UltraViewer hoàn tất! Biểu tượng đã được xuất ra màn hình."
+install_rustdesk() {
+    check_root
+    msg_step "CÀI ĐẶT PHẦN MỀM ĐIỀU KHIỂN TỪ XA RUSTDESK (OPEN-SOURCE)"
+
+    if command -v rustdesk >/dev/null 2>&1; then
+        msg_ok "RustDesk đã được cài đặt trên hệ thống."
+        export_single_desktop_shortcut "/usr/share/applications/rustdesk.desktop"
+        return 0
+    fi
+
+    msg_info "Đang tìm kiếm và tải phiên bản RustDesk mới nhất (.deb x86_64)..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq || true
+    apt-get install -y curl wget libxdo3 libgtk-3-0 libasound2 >/dev/null 2>&1 || true
+
+    local rustdesk_deb="/tmp/rustdesk.deb"
+    local download_url=""
+
+    # Try GitHub API for latest release
+    download_url=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest 2>/dev/null | grep -o 'https://[^"]*x86_64\.deb' | head -n 1 || true)
+    if [[ -z "$download_url" ]]; then
+        download_url="https://github.com/rustdesk/rustdesk/releases/download/1.3.8/rustdesk-1.3.8-x86_64.deb"
+    fi
+
+    msg_info "Đang tải RustDesk từ: ${download_url}..."
+    if wget -q --show-progress -O "$rustdesk_deb" "$download_url" || \
+       wget -q --show-progress -O "$rustdesk_deb" "https://github.com/rustdesk/rustdesk/releases/download/1.3.7/rustdesk-1.3.7-x86_64.deb"; then
+        msg_info "Đang cài đặt RustDesk..."
+        if apt-get install -y "$rustdesk_deb" >/dev/null 2>&1; then
+            msg_ok "Cài đặt RustDesk thành công!"
+            rm -f "$rustdesk_deb"
+            export_single_desktop_shortcut "/usr/share/applications/rustdesk.desktop"
+            return 0
+        else
+            apt-get -f install -y >/dev/null 2>&1 || true
+            msg_ok "Đã sửa phụ thuộc và hoàn tất cài đặt RustDesk!"
+            rm -f "$rustdesk_deb"
+            export_single_desktop_shortcut "/usr/share/applications/rustdesk.desktop"
+            return 0
+        fi
+    else
+        msg_err "Tải gói RustDesk thất bại. Vui lòng kiểm tra kết nối mạng."
+        return 1
+    fi
 }
 
 install_chinese_fonts() {
@@ -382,7 +390,8 @@ export_all_desktop_shortcuts() {
         "/usr/share/applications/google-chrome.desktop"
         "/usr/share/applications/zalo.desktop"
         "/usr/share/applications/wechat.desktop"
-        "/usr/share/applications/ultraviewer.desktop"
+        "/usr/share/applications/anydesk.desktop"
+        "/usr/share/applications/rustdesk.desktop"
     )
 
     for app in "${apps[@]}"; do
@@ -401,15 +410,16 @@ install_all_essential_apps() {
     echo "  1. Google Chrome Browser (Trình duyệt chuẩn doanh nghiệp)"
     echo "  2. Zalo Desktop (Nhắn tin công việc nhanh)"
     echo "  3. WeChat (微信 - Trao đổi đối tác & chuyên gia nước ngoài)"
-    echo "  4. UltraViewer (Hỗ trợ IT điều khiển máy tính từ xa qua Wine)"
-    echo "  5. Bộ Font chữ tiếng Trung đầy đủ (Noto CJK / WQY / Arphic)"
-    echo "  6. Bộ gõ tiếng Trung Pinyin (IBus Libpinyin - Tích hợp ẩn khay hệ thống)"
-    echo "  7. Bộ gõ tiếng Việt Bamboo (IBus Bamboo - Toàn hệ thống)"
-    echo "  8. Tự động xuất biểu tượng ra màn hình Desktop cho toàn bộ người dùng"
+    echo "  4. AnyDesk (Điều khiển từ xa tốc độ cao - Native Linux)"
+    echo "  5. RustDesk (Điều khiển từ xa mã nguồn mở an toàn - Native Linux)"
+    echo "  6. Bộ Font chữ tiếng Trung đầy đủ (Noto CJK / WQY / Arphic)"
+    echo "  7. Bộ gõ tiếng Trung Pinyin (IBus Libpinyin - Tích hợp ẩn khay hệ thống)"
+    echo "  8. Bộ gõ tiếng Việt Bamboo (IBus Bamboo - Toàn hệ thống)"
+    echo "  9. Tự động xuất biểu tượng ra màn hình Desktop cho toàn bộ người dùng"
     echo "--------------------------------------------------------"
 
-    if ! prompt_confirm "Bạn có chắc chắn muốn cài đặt toàn bộ ứng dụng này?" "Y"; then
-        msg_info "Đã hủy thao tác."
+    if ! prompt_confirm "Bạn có muốn cài đặt toàn bộ ứng dụng này?" "Y"; then
+        msg_info "Đang hủy thao tác."
         return 0
     fi
 
@@ -417,7 +427,8 @@ install_all_essential_apps() {
     install_chrome || true
     install_zalo || true
     install_wechat || true
-    install_ultraviewer || true
+    install_anydesk || true
+    install_rustdesk || true
     install_chinese_fonts || true
     setup_bamboo_system_wide || true
     install_chinese_input || true
@@ -440,27 +451,29 @@ enterprise_apps_menu() {
         echo " [2]  Cài đặt Google Chrome Browser"
         echo " [3]  Cài đặt Zalo Desktop"
         echo " [4]  Cài đặt WeChat (微信)"
-        echo " [5]  Cài đặt UltraViewer (Hỗ trợ điều khiển từ xa qua Wine)"
-        echo " [6]  Cài đặt Bộ Font chữ tiếng Trung đầy đủ (Noto CJK / WQY / Arphic)"
-        echo " [7]  Cài đặt Bộ gõ tiếng Trung Pinyin (IBus Libpinyin - Khay hệ thống)"
-        echo " [8]  Cài đặt Bộ gõ tiếng Việt Bamboo (IBus Bamboo - Toàn hệ thống)"
-        echo " [9]  Xuất toàn bộ biểu tượng (Icons) ra màn hình Desktop cho mọi user"
+        echo " [5]  Cài đặt AnyDesk (Điều khiển từ xa tốc độ cao)"
+        echo " [6]  Cài đặt RustDesk (Điều khiển từ xa mã nguồn mở an toàn)"
+        echo " [7]  Cài đặt Bộ Font chữ tiếng Trung đầy đủ (Noto CJK / WQY / Arphic)"
+        echo " [8]  Cài đặt Bộ gõ tiếng Trung Pinyin (IBus Libpinyin - Khay hệ thống)"
+        echo " [9]  Cài đặt Bộ gõ tiếng Việt Bamboo (IBus Bamboo - Toàn hệ thống)"
+        echo " [10] Xuất toàn bộ biểu tượng (Icons) ra màn hình Desktop cho mọi user"
         echo " [0]  Quay lại Menu chính"
         echo "----------------------------------------------------------------"
 
         local choice
-        prompt_with_default "Chọn chức năng [0-9]" "1" choice
+        prompt_with_default "Chọn chức năng [0-10]" "1" choice
 
         case "$choice" in
             1) install_all_essential_apps ;;
             2) install_chrome ;;
             3) install_zalo ;;
             4) install_wechat ;;
-            5) install_ultraviewer ;;
-            6) install_chinese_fonts ;;
-            7) install_chinese_input ;;
-            8) setup_bamboo_system_wide ;;
-            9) export_all_desktop_shortcuts ;;
+            5) install_anydesk ;;
+            6) install_rustdesk ;;
+            7) install_chinese_fonts ;;
+            8) install_chinese_input ;;
+            9) setup_bamboo_system_wide ;;
+            10) export_all_desktop_shortcuts ;;
             0) break ;;
             *) msg_err "Lựa chọn không hợp lệ." ;;
         esac
