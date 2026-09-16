@@ -12,7 +12,7 @@ source "$LIB_DIR/common.sh"
 install_printer_dependencies() {
     msg_step "KIỂM TRA VÀ CÀI ĐẶT DỊCH VỤ MÁY IN (CUPS & DRIVERS)"
 
-    local pkgs=(cups cups-client cups-filters printer-driver-all smbclient)
+    local pkgs=(cups cups-client cups-filters printer-driver-all foomatic-db-compressed-ppds smbclient)
     local missing=()
     for pkg in "${pkgs[@]}"; do
         if ! dpkg -s "$pkg" >/dev/null 2>&1; then
@@ -424,6 +424,48 @@ add_windows_shared_printer() {
         return 1
     fi
 
+    # Driver Selection
+    echo ""
+    echo -e "${C_BOLD}Chọn Driver (Trình điều khiển) cho máy in:${C_RESET}"
+    echo "  1) Generic PCL 6 / PCL XL (KHUYÊN DÙNG NHẤT - Chuẩn 95% máy in văn phòng HP, Canon, Ricoh...)"
+    echo "  2) Generic PCL Laser Printer (Chuẩn PCL Laser tích hợp sẵn của CUPS)"
+    echo "  3) Raw Queue (Không lọc - Gửi lệnh in thô để Windows Print Server tự xử lý)"
+    echo "  4) Generic PostScript Printer (CHỈ CHỌN nếu máy in có chip Adobe PostScript, nếu không sẽ in giấy trắng liên tục!)"
+    echo "  5) Tự chỉ định file .ppd riêng"
+    local driver_choice
+    prompt_with_default "Lựa chọn driver [1-5]" "1" driver_choice
+
+    local driver_opt=""
+    case "$driver_choice" in
+        1)
+            local pxl_ppd=""
+            pxl_ppd=$(lpinfo -m 2>/dev/null | grep -E "Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd|pxlcolor.ppd|pxlmono.ppd" | head -n 1 | awk '{print $1}')
+            if [[ -n "$pxl_ppd" ]]; then
+                driver_opt="-m $pxl_ppd"
+            elif lpinfo -m 2>/dev/null | grep -q "laserjet.ppd"; then
+                driver_opt="-m drv:///sample.drv/laserjet.ppd"
+            else
+                driver_opt="-m drv:///sample.drv/laserjet.ppd"
+            fi
+            ;;
+        2) driver_opt="-m drv:///sample.drv/laserjet.ppd" ;;
+        3) driver_opt="-m raw" ;;
+        4) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
+        5)
+            local ppd_path
+            prompt_with_default "Nhập đường dẫn đầy đủ tới file .ppd" "" ppd_path
+            if [[ -f "$ppd_path" ]]; then
+                driver_opt="-P $ppd_path"
+            else
+                msg_warn "Không tìm thấy file PPD. Tự động dùng PCL Laser Printer."
+                driver_opt="-m drv:///sample.drv/laserjet.ppd"
+            fi
+            ;;
+        *) driver_opt="-m drv:///sample.drv/laserjet.ppd" ;;
+    esac
+
+    msg_info "Đang cài đặt máy in SMB: ${local_printer_name} -> ${print_server}/${share_printer_name}..."
+
     # Build CUPS SMB URI with encoded credentials
     local smb_uri=""
     local url_share_name
@@ -443,42 +485,6 @@ add_windows_shared_printer() {
         smb_uri="smb://${enc_dom}%5C${enc_usr}:${enc_pass}@${print_server}/${url_share_name}"
     fi
     unset auth_pass_input enc_pass
-
-    # Driver Selection
-    echo ""
-    echo -e "${C_BOLD}Chọn Driver (Trình điều khiển) cho máy in:${C_RESET}"
-    echo "  1) Generic PostScript Printer (Khuyên dùng - Chuẩn in phổ biến nhất cho Print Server)"
-    echo "  2) Generic PCL 6 / PCL XL Printer (Tương thích tốt máy HP, Canon, Ricoh, Brother)"
-    echo "  3) Raw Queue (Không qua lọc - Gửi lệnh in thô cho Windows Server tự xử lý)"
-    echo "  4) Tự chỉ định file .ppd riêng"
-    local driver_choice
-    prompt_with_default "Lựa chọn driver [1-4]" "1" driver_choice
-
-    local driver_opt=""
-    case "$driver_choice" in
-        1) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
-        2)
-            if lpinfo -m 2>/dev/null | grep -q "Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd"; then
-                driver_opt="-m foomatic-db-compressed-ppds:0/ppd/foomatic-ppd/Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd"
-            else
-                driver_opt="-m drv:///sample.drv/generic.ppd"
-            fi
-            ;;
-        3) driver_opt="-m raw" ;;
-        4)
-            local ppd_path
-            prompt_with_default "Nhập đường dẫn đầy đủ tới file .ppd" "" ppd_path
-            if [[ -f "$ppd_path" ]]; then
-                driver_opt="-P $ppd_path"
-            else
-                msg_warn "Không tìm thấy file PPD. Tự động dùng Generic PostScript."
-                driver_opt="-m drv:///sample.drv/generic.ppd"
-            fi
-            ;;
-        *) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
-    esac
-
-    msg_info "Đang cài đặt máy in SMB: ${local_printer_name} -> ${print_server}/${share_printer_name}..."
 
     # Configure CUPS printer queue
     # shellcheck disable=SC2086
@@ -520,23 +526,21 @@ print_test_page() {
         return 1
     fi
 
-    msg_info "Đang gửi lệnh in trang thử nghiệm tới: ${target_printer}..."
+    msg_info "Đang gửi lệnh in trang thử nghiệm tới máy in [${target_printer}]..."
 
-    # Create a nice test page text
-    local test_txt="/tmp/zorin_testprint.txt"
+    local test_txt="/tmp/cups_test_page_${target_printer}.txt"
     cat > "$test_txt" <<EOF
-============================================================
-           ZORIN OS ENTERPRISE PRINT TEST PAGE
-============================================================
-May in       : ${target_printer}
-Thoi gian in : $(date '+%Y-%m-%d %H:%M:%S')
-May tram     : $(hostname -f 2>/dev/null || hostname)
-IP May tram  : $(hostname -I 2>/dev/null | awk '{print $1}')
-Domain       : bestpacific.com
-============================================================
-Chuc mung! May in chia se qua mang da duoc ket noi va hoat
-dong hoan hao tren he dieu hanh Zorin OS.
-============================================================
+======================================================================
+  ZORIN OS ENTERPRISE PRINT TEST PAGE
+======================================================================
+  May in       : ${target_printer}
+  Thoi gian    : $(date '+%Y-%m-%d %H:%M:%S')
+  Hostname     : $(hostname)
+  Nguoi dung   : ${USER:-$(whoami)}
+======================================================================
+  Chuc mung! May in da hoat dong chinh xac tren he dieu hanh Zorin OS.
+  Khong con bi loi in tran giay trang do sai PostScript Driver!
+======================================================================
 EOF
 
     if lp -d "$target_printer" "$test_txt" 2>&1; then
@@ -548,6 +552,108 @@ EOF
         rm -f "$test_txt"
         return 1
     fi
+}
+
+change_printer_driver() {
+    check_root
+    msg_step "THAY ĐỔI DRIVER CHO MÁY IN HIỆN CÓ (SỬA LỖI IN GIẤY TRẮNG LIÊN TỤC)"
+
+    list_printers
+
+    local target_printer
+    prompt_with_default "Nhập tên máy in muốn đổi Driver (VD: vn-it-office)" "vn-it-office" target_printer
+
+    if [[ -z "$target_printer" ]]; then
+        msg_warn "Chưa nhập tên máy in."
+        return 1
+    fi
+
+    if ! lpstat -p "$target_printer" >/dev/null 2>&1; then
+        msg_err "Không tìm thấy máy in '${target_printer}' trên hệ thống CUPS."
+        return 1
+    fi
+
+    echo ""
+    echo -e "${C_BOLD}Chọn Driver mới để khắc phục lỗi:${C_RESET}"
+    echo "  1) Generic PCL 6 / PCL XL (KHUYÊN DÙNG NHẤT - Khắc phục lỗi in giấy trắng liên tục)"
+    echo "  2) Generic PCL Laser Printer (Chuẩn PCL Laser cơ bản tích hợp sẵn của CUPS)"
+    echo "  3) Raw Queue (Không lọc - Gửi lệnh in thô để Windows Print Server tự xử lý)"
+    echo "  4) Generic PostScript Printer (Chỉ dành cho máy in có chip Adobe PostScript phần cứng)"
+    echo "  5) Chỉ định file .ppd riêng"
+
+    local d_choice
+    prompt_with_default "Lựa chọn Driver [1-5]" "1" d_choice
+
+    local driver_opt=""
+    case "$d_choice" in
+        1)
+            local pxl_ppd=""
+            pxl_ppd=$(lpinfo -m 2>/dev/null | grep -E "Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd|pxlcolor.ppd|pxlmono.ppd" | head -n 1 | awk '{print $1}')
+            if [[ -n "$pxl_ppd" ]]; then
+                driver_opt="-m $pxl_ppd"
+            else
+                driver_opt="-m drv:///sample.drv/laserjet.ppd"
+            fi
+            ;;
+        2) driver_opt="-m drv:///sample.drv/laserjet.ppd" ;;
+        3) driver_opt="-m raw" ;;
+        4) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
+        5)
+            local ppd_path
+            prompt_with_default "Nhập đường dẫn đầy đủ tới file .ppd" "" ppd_path
+            if [[ -f "$ppd_path" ]]; then
+                driver_opt="-P $ppd_path"
+            else
+                msg_warn "Không tìm thấy file PPD. Dùng PCL Laser Printer."
+                driver_opt="-m drv:///sample.drv/laserjet.ppd"
+            fi
+            ;;
+        *) driver_opt="-m drv:///sample.drv/laserjet.ppd" ;;
+    esac
+
+    msg_info "Đang cập nhật Driver cho máy in ${target_printer}..."
+    # shellcheck disable=SC2086
+    if lpadmin -p "$target_printer" $driver_opt; then
+        cupsenable "$target_printer" 2>/dev/null || true
+        cupsaccept "$target_printer" 2>/dev/null || true
+        msg_ok "Đã cập nhật Driver cho máy in [${target_printer}] thành công!"
+        msg_ok "Driver mới: ${driver_opt}"
+
+        if prompt_confirm "Bạn có muốn in thử 1 trang kiểm tra ngay bây giờ?" "Y"; then
+            print_test_page "$target_printer"
+        fi
+        return 0
+    else
+        msg_err "Cập nhật Driver thất bại."
+        return 1
+    fi
+}
+
+cancel_all_print_jobs() {
+    check_root
+    msg_step "HỦY TOÀN BỘ LỆNH IN ĐANG KẸT / IN TRÀN GIẤY TRẮNG"
+
+    msg_info "1. Hủy tất cả các lệnh in trong hàng đợi CUPS (cancel -a -x)..."
+    cancel -a -x 2>/dev/null || true
+    lprm - 2>/dev/null || true
+
+    msg_info "2. Làm sạch bộ nhớ hàng đợi của từng máy in..."
+    for p in $(lpstat -p 2>/dev/null | awk '{print $2}'); do
+        cupsdisable "$p" 2>/dev/null || true
+        lpadmin -p "$p" -c 2>/dev/null || true
+        cupsenable "$p" 2>/dev/null || true
+    done
+
+    msg_info "3. Khởi động lại dịch vụ CUPS..."
+    systemctl restart cups 2>/dev/null || true
+
+    msg_ok "========================================================="
+    msg_ok "ĐÃ XÓA SẠCH HOÀN TOÀN CÁC LỆNH IN TRÊN HỆ THỐNG ZORIN OS!"
+    msg_warn "QUAN TRỌNG: Nếu máy in vẫn đang tiếp tục nuốt và nhả giấy:"
+    msg_warn "-> Do bộ nhớ đệm RAM bên trong máy in đã nhận lệnh từ trước."
+    msg_warn "-> Hãy nhấn nút [CANCEL / STOP] trên bảng điều khiển máy in,"
+    msg_warn "   hoặc TẮT CÔNG TẮC NGUỒN máy in khoảng 5 giây rồi BẬT LẠI."
+    msg_ok "========================================================="
 }
 
 remove_printer() {
@@ -584,12 +690,14 @@ printer_manager_menu() {
         echo " 4) In trang thử nghiệm (Print Test Page)"
         echo " 5) Đặt máy in làm Mặc định (Default Printer)"
         echo " 6) Xóa máy in khỏi hệ thống"
-        echo " 7) Cài đặt / cập nhật dịch vụ CUPS và Drivers"
+        echo " 7) Cài đặt / cập nhật dịch vụ CUPS và Drivers đầy đủ"
+        echo -e " ${C_YELLOW}8) Đổi Driver cho máy in (Sửa lỗi in giấy trắng liên tục)${C_RESET}"
+        echo -e " ${C_RED}9) Hủy TOÀN BỘ lệnh in đang kẹt (Cancel All Print Jobs)${C_RESET}"
         echo " 0) Quay lại Menu chính"
         echo "----------------------------------------------------------------"
 
         local p_choice
-        prompt_with_default "Chọn chức năng [0-7]" "1" p_choice
+        prompt_with_default "Chọn chức năng [0-9]" "1" p_choice
 
         case "$p_choice" in
             1) list_printers ;;
@@ -605,6 +713,8 @@ printer_manager_menu() {
                 ;;
             6) remove_printer ;;
             7) install_printer_dependencies ;;
+            8) change_printer_driver ;;
+            9) cancel_all_print_jobs ;;
             0) break ;;
             *) msg_err "Lựa chọn không hợp lệ." ;;
         esac
