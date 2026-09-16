@@ -178,12 +178,13 @@ automated_quick_setup() {
         return 1
     fi
 
-    # Step 2: Configure SSSD
-    msg_step "[BƯỚC 2/6] CẤU HÌNH SSSD"
+    # Step 2: Configure SSSD & Name Resolution
+    msg_step "[BƯỚC 2/7] CẤU HÌNH SSSD VÀ PHÂN GIẢI TÊN MÁY WINDOWS"
     configure_sssd
+    configure_windows_name_resolution "bestpacific.com"
 
     # Step 3: Configure PAM
-    msg_step "[BƯỚC 3/6] CẤU HÌNH PAM VÀ HOME DIRECTORY"
+    msg_step "[BƯỚC 3/7] CẤU HÌNH PAM VÀ HOME DIRECTORY"
     configure_pam_mkhomedir
 
     # Step 4: Configure GDM & Xorg

@@ -274,9 +274,28 @@ check_host_ping_and_resolve() {
     if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         resolved_ip="$target"
     else
+        # 1. Try direct hostname resolution
         resolved_ip=$(getent ahosts "$target" 2>/dev/null | awk '{print $1}' | head -n 1)
         if [[ -z "$resolved_ip" ]]; then
             resolved_ip=$(host "$target" 2>/dev/null | awk '/has address/ {print $NF}' | head -n 1)
+        fi
+
+        # 2. Try with Domain Suffix if target is a short name (VD: vn-printersrv -> vn-printersrv.bestpacific.com)
+        if [[ -z "$resolved_ip" && "$target" != *"."* ]]; then
+            local domain_suffix
+            domain_suffix=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+            domain_suffix="${domain_suffix:-bestpacific.com}"
+            msg_info "Thử phân giải với Domain Suffix [${target}.${domain_suffix}]..."
+            resolved_ip=$(getent ahosts "${target}.${domain_suffix}" 2>/dev/null | awk '{print $1}' | head -n 1)
+            if [[ -z "$resolved_ip" ]]; then
+                resolved_ip=$(host "${target}.${domain_suffix}" 2>/dev/null | awk '/has address/ {print $NF}' | head -n 1)
+            fi
+        fi
+
+        # 3. Try NetBIOS Name Resolution via nmblookup (Samba / Windows WINS broadcast)
+        if [[ -z "$resolved_ip" ]] && command -v nmblookup >/dev/null 2>&1; then
+            msg_info "Thử tra cứu NetBIOS Name (WINS broadcast) cho [${target}]..."
+            resolved_ip=$(nmblookup "$target" 2>/dev/null | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/ {print $1}' | head -n 1)
         fi
     fi
 

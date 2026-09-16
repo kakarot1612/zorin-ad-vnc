@@ -111,9 +111,66 @@ run_dns_ad_check() {
     echo "--------------------------------------------------------"
     if [[ "$all_ok" == "true" ]]; then
         msg_ok "TẤT CẢ KIỂM TRA MẠNG VÀ DNS ĐÃ SẴN SÀNG ĐỂ JOIN AD!"
-        return 0
     else
         msg_warn "Có một số cảnh báo hoặc lỗi kết nối. Hãy kiểm tra lại DNS/Firewall trước khi Join."
-        return 1
     fi
+
+    # Check if Windows short-name resolution is needed
+    echo ""
+    if prompt_confirm "Bạn có muốn tối ưu hóa để Zorin OS ping được trực tiếp tên máy tính (VD: ping vn-printersrv) như Windows?" "Y"; then
+        configure_windows_name_resolution "$domain"
+    fi
+
+    return 0
+}
+
+configure_windows_name_resolution() {
+    check_root
+    msg_step "CẤU HÌNH PHÂN GIẢI TÊN MÁY TÍNH WINDOWS (NETBIOS / WINS / DNS SEARCH)"
+
+    local domain="$1"
+    if [[ -z "$domain" ]]; then
+        domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+        domain="${domain:-bestpacific.com}"
+    fi
+
+    msg_info "1. Cấu hình DNS Search Domain [${domain}] cho systemd-resolved..."
+    mkdir -p /etc/systemd/resolved.conf.d 2>/dev/null || true
+    cat > /etc/systemd/resolved.conf.d/enterprise-domain.conf <<EOF
+[Resolve]
+Domains=${domain}
+LLMNR=yes
+MulticastDNS=yes
+EOF
+
+    # Ensure /etc/resolv.conf search domain
+    if [[ -f /etc/resolv.conf ]] && ! grep -q "search.*${domain}" /etc/resolv.conf; then
+        sed -i "1s/^/search ${domain}\n/" /etc/resolv.conf 2>/dev/null || true
+    fi
+
+    msg_info "2. Cài đặt các gói hỗ trợ WINS / NetBIOS (libnss-winbind, winbind)..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq || true
+    apt-get install -y libnss-winbind winbind samba-common-bin smbclient >/dev/null 2>&1 || true
+
+    msg_info "3. Cấu hình /etc/nsswitch.conf kích hoạt phân giải WINS..."
+    if [[ -f /etc/nsswitch.conf ]]; then
+        if ! grep -E '^hosts:.*wins' /etc/nsswitch.conf >/dev/null 2>&1; then
+            sed -i '/^hosts:/ s/$/ wins/' /etc/nsswitch.conf
+            msg_ok "Đã thêm 'wins' vào /etc/nsswitch.conf"
+        else
+            msg_ok "/etc/nsswitch.conf đã có 'wins'."
+        fi
+    fi
+
+    msg_info "4. Khởi động lại dịch vụ phân giải tên miền..."
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl restart systemd-resolved 2>/dev/null || true
+    systemctl restart winbind 2>/dev/null || true
+
+    msg_ok "========================================================="
+    msg_ok "CẤU HÌNH PHÂN GIẢI TÊN MÁY TÍNH WINDOWS HOÀN TẤT!"
+    msg_ok "Từ bây giờ, bạn có thể ping trực tiếp tên máy tính (VD: ping vn-printersrv)"
+    msg_ok "hoặc các máy tính khác trong mạng Domain như trên Windows!"
+    msg_ok "========================================================="
 }
