@@ -341,20 +341,111 @@ EOF
     msg_ok "Chuyển đổi ngôn ngữ gõ cực nhanh bằng phím tắt: [Super (Windows) + Phím cách]"
 }
 
+setup_desktop_sync_autostart() {
+    check_root
+    local sync_bin="/usr/local/bin/zorin-desktop-icons-sync.sh"
+    local autostart_desktop="/etc/xdg/autostart/zorin-desktop-icons-sync.desktop"
+
+    # 1. Create global user sync script
+    cat > "$sync_bin" <<'EOF'
+#!/usr/bin/env bash
+# ==============================================================================
+# Zorin OS Enterprise Desktop Icons & Input Sources Auto-Sync
+# Runs on graphical login for any local or Active Directory user
+# ==============================================================================
+
+# Wait a brief moment for GNOME session, GVFS, and D-Bus to initialize
+sleep 2
+
+# Determine Desktop directory
+DESKTOP_DIR=""
+if command -v xdg-user-dir >/dev/null 2>&1; then
+    DESKTOP_DIR=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+fi
+
+if [[ -z "$DESKTOP_DIR" || ! -d "$DESKTOP_DIR" ]]; then
+    if [[ -d "${HOME}/Bàn làm việc" ]]; then
+        DESKTOP_DIR="${HOME}/Bàn làm việc"
+    else
+        DESKTOP_DIR="${HOME}/Desktop"
+    fi
+fi
+
+mkdir -p "$DESKTOP_DIR" 2>/dev/null || true
+
+# List of enterprise apps to place on Desktop
+APPS=(
+    "google-chrome.desktop"
+    "zalo.desktop"
+    "wechat.desktop"
+    "anydesk.desktop"
+    "rustdesk.desktop"
+)
+
+for app in "${APPS[@]}"; do
+    src_file="/usr/share/applications/${app}"
+    target_file="${DESKTOP_DIR}/${app}"
+    if [[ -f "$src_file" ]]; then
+        # Copy or refresh desktop entry
+        if [[ ! -f "$target_file" || "$src_file" -nt "$target_file" ]]; then
+            cp -f "$src_file" "$target_file" 2>/dev/null || true
+            chmod 755 "$target_file" 2>/dev/null || true
+        fi
+
+        # Mark as trusted in GNOME desktop environment
+        if command -v gio >/dev/null 2>&1; then
+            gio set "$target_file" metadata::trusted true 2>/dev/null || true
+        fi
+    fi
+done
+
+# Ensure input sources (US + Bamboo + libpinyin) are enabled in user session
+if command -v gsettings >/dev/null 2>&1; then
+    current_sources=$(gsettings get org.gnome.desktop.input-sources sources 2>/dev/null || true)
+    if [[ "$current_sources" != *"Bamboo"* || "$current_sources" != *"libpinyin"* ]]; then
+        gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('ibus', 'Bamboo'), ('ibus', 'libpinyin')]" 2>/dev/null || true
+        gsettings set org.gnome.desktop.input-sources mru-sources "[('ibus', 'Bamboo'), ('xkb', 'us'), ('ibus', 'libpinyin')]" 2>/dev/null || true
+        gsettings set org.gnome.desktop.input-sources show-all-sources true 2>/dev/null || true
+    fi
+fi
+EOF
+    chmod 755 "$sync_bin"
+
+    # 2. Create XDG Autostart entry for ALL users
+    mkdir -p "$(dirname "$autostart_desktop")"
+    cat > "$autostart_desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Zorin Enterprise Desktop Icons Sync
+Comment=Automatically sync desktop icons and input methods for any user login
+Exec=${sync_bin}
+Terminal=false
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Phase=Application
+EOF
+    chmod 644 "$autostart_desktop"
+    msg_ok "Đã cấu hình tự động đồng bộ biểu tượng ra màn hình khi BẤT KỲ user nào đăng nhập!"
+}
+
 export_single_desktop_shortcut() {
     local desktop_file="$1"
     [[ ! -f "$desktop_file" ]] && return 0
     local filename
     filename=$(basename "$desktop_file")
 
-    # 1. Copy to /etc/skel/Desktop and /etc/skel/Bàn làm việc for new AD users
+    # 1. Ensure autostart sync daemon is registered
+    setup_desktop_sync_autostart >/dev/null 2>&1 || true
+
+    # 2. Copy to /etc/skel/Desktop and /etc/skel/Bàn làm việc for new AD users
     for skel_dir in "/etc/skel/Desktop" "/etc/skel/Bàn làm việc"; do
         mkdir -p "$skel_dir" 2>/dev/null || true
         cp -f "$desktop_file" "${skel_dir}/${filename}"
         chmod +x "${skel_dir}/${filename}"
     done
 
-    # 2. Copy to all existing user desktops
+    # 3. Copy to all existing user desktops
     for home_dir in /home/*; do
         [[ ! -d "$home_dir" ]] && continue
         local user_name
@@ -386,6 +477,9 @@ export_all_desktop_shortcuts() {
     check_root
     msg_step "XUẤT TOÀN BỘ BIỂU TƯỢNG RA MÀN HÌNH DESKTOP CHO TẤT CẢ USER"
 
+    # Configure autostart sync for all current and future user logins
+    setup_desktop_sync_autostart
+
     local apps=(
         "/usr/share/applications/google-chrome.desktop"
         "/usr/share/applications/zalo.desktop"
@@ -401,6 +495,7 @@ export_all_desktop_shortcuts() {
     done
 
     msg_ok "Toàn bộ biểu tượng ứng dụng đã được xuất ra màn hình Desktop cho mọi người dùng!"
+    msg_ok "Cơ chế Auto-Sync đã kích hoạt: Bất kỳ user nào mới đăng nhập cũng sẽ tự động có icon trên màn hình!"
 }
 
 install_all_essential_apps() {
