@@ -100,17 +100,13 @@ run_health_check() {
         format_status "PAM mkhomedir" "MISSING" "warn"
     fi
 
-    # 9. GDM Wayland Disabled & Xorg Only
+    # 9. GDM Wayland Disabled
     local gdm_conf="/etc/gdm3/custom.conf"
     [[ ! -f "$gdm_conf" ]] && gdm_conf="/etc/gdm/custom.conf"
     if [[ -f "$gdm_conf" ]] && grep -q -E "^WaylandEnable=false" "$gdm_conf"; then
-        if [[ -d "/usr/share/wayland-sessions.disabled" ]]; then
-            format_status "Xorg Only (Wayland Disabled)" "OK (Xorg Exclusive)" "true"
-        else
-            format_status "Xorg Only (Wayland Disabled)" "OK (GDM Wayland=false)" "true"
-        fi
+        format_status "GDM Wayland Disabled" "OK (Wayland=false)" "true"
     else
-        format_status "Xorg Only (Wayland Disabled)" "NOT CONFIGURED" "warn"
+        format_status "GDM Wayland Disabled" "NOT CONFIGURED" "warn"
     fi
 
     # 10. Session Type
