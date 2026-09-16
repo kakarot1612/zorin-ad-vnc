@@ -90,7 +90,22 @@ install_vnc_systemd_service() {
     check_root
     msg_step "CÀI ĐẶT SYSTEMD SERVICE CHO DYNAMIC X11VNC"
 
-    # Copy daemon script to /usr/local/bin
+    # 1. Ensure x11vnc binary is installed
+    if ! command -v x11vnc >/dev/null 2>&1; then
+        install_x11vnc || return 1
+    fi
+
+    # 2. Ensure VNC password file exists (generate default 123456 if missing)
+    mkdir -p "$VNC_CONFIG_DIR"
+    if [[ ! -f "$VNC_PASSWD_FILE" ]]; then
+        msg_info "Chưa có file mật khẩu VNC, tạo mật khẩu mặc định (123456)..."
+        x11vnc -storepasswd "123456" "$VNC_PASSWD_FILE" >/dev/null 2>&1
+        chmod 644 "$VNC_PASSWD_FILE"
+        chown root:root "$VNC_PASSWD_FILE"
+        msg_ok "Đã tạo mật khẩu VNC mặc định tại: ${VNC_PASSWD_FILE} (Mật khẩu: 123456)"
+    fi
+
+    # 3. Copy daemon script to /usr/local/bin
     local src_daemon="${LIB_DIR}/x11vnc_session_daemon.sh"
     if [[ -f "$src_daemon" ]]; then
         cp "$src_daemon" "$DAEMON_SCRIPT"
@@ -101,7 +116,7 @@ install_vnc_systemd_service() {
         return 1
     fi
 
-    # Create or update systemd service unit
+    # 4. Create systemd service unit with Alias=x11vnc.service
     local unit_file="/etc/systemd/system/${SYSTEMD_SERVICE}"
     cat > "$unit_file" <<EOF
 [Unit]
@@ -121,12 +136,18 @@ StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+Alias=x11vnc.service
 EOF
 
+    # 5. Create direct symlink for x11vnc.service so 'systemctl status x11vnc' works directly
+    ln -sf "$unit_file" /etc/systemd/system/x11vnc.service
+
     systemctl daemon-reload
-    systemctl enable "${SYSTEMD_SERVICE}"
+    systemctl enable "${SYSTEMD_SERVICE}" 2>/dev/null || true
+    systemctl enable x11vnc.service 2>/dev/null || true
     systemctl restart "${SYSTEMD_SERVICE}"
-    msg_ok "Đã kích hoạt và khởi động dịch vụ: ${SYSTEMD_SERVICE}"
+    msg_ok "Đã kích hoạt và khởi động dịch vụ: ${SYSTEMD_SERVICE} (Alias: x11vnc.service)"
+    msg_info "Bạn có thể kiểm tra trạng thái bằng cả: systemctl status x11vnc hoặc systemctl status zorin-x11vnc"
 
     return 0
 }

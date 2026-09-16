@@ -22,17 +22,40 @@ echo -e "\033[1;34m==>\033[1;37m ĐANG CÀI ĐẶT ZORIN AD JOIN & X11VNC MANAGE
 # 1. Ensure scripts have execution permissions
 chmod +x "$INSTALL_DIR"/*.sh "$INSTALL_DIR"/lib/*.sh 2>/dev/null || true
 
-# 2. Install daemon script
+# 2. Check and install x11vnc package if not present
+if ! command -v x11vnc >/dev/null 2>&1; then
+    echo -e "\033[0;34m[INFO]\033[0m Đang cài đặt gói x11vnc..."
+    apt-get update -qq || true
+    apt-get install -y x11vnc >/dev/null 2>&1 || true
+fi
+if command -v x11vnc >/dev/null 2>&1; then
+    echo -e "\033[0;32m[✓ OK]\033[0m Gói x11vnc đã sẵn sàng: $(x11vnc -version 2>&1 | head -n 1)"
+fi
+
+# 3. Ensure VNC default password exists
+mkdir -p /etc/x11vnc
+if [[ ! -f /etc/x11vnc/vncpwd ]]; then
+    if command -v x11vnc >/dev/null 2>&1; then
+        x11vnc -storepasswd "123456" /etc/x11vnc/vncpwd >/dev/null 2>&1 || true
+        chmod 644 /etc/x11vnc/vncpwd 2>/dev/null || true
+        echo -e "\033[0;32m[✓ OK]\033[0m Đã tạo mật khẩu VNC mặc định: /etc/x11vnc/vncpwd (123456)"
+    fi
+fi
+
+# 4. Install daemon script
 cp "$INSTALL_DIR/lib/x11vnc_session_daemon.sh" "$DAEMON_PATH"
 chmod +x "$DAEMON_PATH"
 echo -e "\033[0;32m[✓ OK]\033[0m Đã cài đặt daemon script vào: $DAEMON_PATH"
 
-# 3. Install systemd service
+# 5. Install systemd service & alias symlink
 cp "$INSTALL_DIR/systemd/zorin-x11vnc.service" "$SERVICE_PATH"
+ln -sf "$SERVICE_PATH" /etc/systemd/system/x11vnc.service
 systemctl daemon-reload
-echo -e "\033[0;32m[✓ OK]\033[0m Đã cài đặt systemd unit: $SERVICE_PATH"
+systemctl enable "$SERVICE_PATH" 2>/dev/null || true
+systemctl restart zorin-x11vnc.service 2>/dev/null || true
+echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: zorin-x11vnc (Alias: x11vnc.service)"
 
-# 4. Create wrapper / symlink for global command 'zorin-ad-vnc'
+# 6. Create wrapper / symlink for global command 'zorin-ad-vnc'
 cat > "$BIN_PATH" <<EOF
 #!/usr/bin/env bash
 exec bash "$INSTALL_DIR/zorin-ad-vnc.sh" "\$@"

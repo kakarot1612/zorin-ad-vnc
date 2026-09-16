@@ -185,16 +185,23 @@ automated_quick_setup() {
     create_full_backup
 
     # Step 1: Join AD (includes package installation & DNS check & interactive credentials)
-    msg_step "[BƯỚC 1/6] THAM GIA ACTIVE DIRECTORY"
+    msg_step "[BƯỚC 1/8] THAM GIA ACTIVE DIRECTORY"
+    local ad_success=true
     if ! join_active_directory; then
-        msg_err "Join AD thất bại. Dừng quy trình thiết lập tự động."
-        return 1
+        ad_success=false
+        msg_err "Join AD chưa hoàn tất."
+        if ! prompt_confirm "Bạn có muốn tiếp tục cài đặt VNC, GDM Xorg, Bamboo và các ứng dụng doanh nghiệp khác không?" "Y"; then
+            msg_warn "Đã dừng quy trình thiết lập tự động theo yêu cầu."
+            return 1
+        fi
     fi
 
-    # Step 2: Configure SSSD & Name Resolution
-    msg_step "[BƯỚC 2/7] CẤU HÌNH SSSD VÀ PHÂN GIẢI TÊN MÁY WINDOWS"
-    configure_sssd
-    configure_windows_name_resolution ""
+    # Step 2: Configure SSSD & Name Resolution (only if AD joined successfully)
+    if [[ "$ad_success" == "true" ]]; then
+        msg_step "[BƯỚC 2/8] CẤU HÌNH SSSD VÀ PHÂN GIẢI TÊN MÁY WINDOWS"
+        configure_sssd
+        configure_windows_name_resolution ""
+    fi
 
     # Step 3: Configure PAM
     msg_step "[BƯỚC 3/7] CẤU HÌNH PAM VÀ HOME DIRECTORY"

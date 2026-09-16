@@ -181,23 +181,37 @@ DC1=${dc1}
 DC2=${dc2}
 EOF
 
-    # 6. Pre-configure /etc/krb5.conf to PIN KDC strictly to DC1 (and DC2)
-    # This prevents Kerberos from doing DNS SRV lookups and hitting off-site WAN DCs
-    msg_info "Ghim cấu hình Kerberos KDC trực tiếp vào Domain Controller [${dc1}]..."
+    # 6. Discover DC FQDN to prevent Kerberos SPN mismatch (Server not found in Kerberos database)
+    msg_info "Thăm dò FQDN máy chủ Domain Controller [${dc1}]..."
+    local dc_fqdn=""
+    dc_fqdn=$(adcli info --domain-controller="$dc1" 2>/dev/null | grep -E '^[[:space:]]*domain-controller[[:space:]]*=' | awk '{print $3}' | head -n 1)
+    if [[ -z "$dc_fqdn" ]]; then
+        dc_fqdn=$(host "$dc1" 2>/dev/null | awk '/pointer/ {print $NF}' | sed 's/\.$//' | head -n 1)
+    fi
+    if [[ -n "$dc_fqdn" ]]; then
+        msg_ok "Phát hiện FQDN Domain Controller: ${dc_fqdn}"
+    else
+        dc_fqdn="$dc1"
+    fi
+
+    # 7. Pre-configure /etc/krb5.conf to PIN KDC strictly to DC FQDN
+    # Setting rdns = false prevents Kerberos from reversing DC IP to an unmapped SPN
+    msg_info "Ghim cấu hình Kerberos KDC trực tiếp vào Domain Controller [${dc_fqdn}]..."
     cat > /etc/krb5.conf <<EOF
 [libdefaults]
     default_realm = ${domain^^}
     dns_lookup_realm = false
     dns_lookup_kdc = false
+    rdns = false
     ticket_lifetime = 24h
     renew_lifetime = 7d
     forwardable = true
 
 [realms]
     ${domain^^} = {
-        kdc = ${dc1}
+        kdc = ${dc_fqdn}
 $([[ -n "$dc2" ]] && echo "        kdc = ${dc2}")
-        admin_server = ${dc1}
+        admin_server = ${dc_fqdn}
         default_domain = ${domain,,}
     }
 
@@ -206,15 +220,18 @@ $([[ -n "$dc2" ]] && echo "        kdc = ${dc2}")
     ${domain,,} = ${domain^^}
 EOF
 
-    # 7. Update /etc/resolv.conf and /etc/hosts with local DC1
+    # 8. Update /etc/resolv.conf and /etc/hosts with local DC
     if [[ -f /etc/resolv.conf ]] && ! grep -q "^nameserver[[:space:]]*${dc1}" /etc/resolv.conf; then
         sed -i "1s/^/nameserver ${dc1}\n/" /etc/resolv.conf 2>/dev/null || true
     fi
-    if ! grep -E "^[[:space:]]*${dc1}[[:space:]]" /etc/hosts >/dev/null 2>&1; then
+    sed -i "/^[[:space:]]*${dc1}[[:space:]]/d" /etc/hosts 2>/dev/null || true
+    if [[ "$dc_fqdn" != "$dc1" ]]; then
+        echo -e "${dc1}\t${dc_fqdn}\t${dc_fqdn%%.*}\t${domain}" >> /etc/hosts
+    else
         echo -e "${dc1}\t${domain}" >> /etc/hosts
     fi
 
-    # 8. Connectivity Check
+    # 9. Connectivity Check
     if ! run_dns_ad_check "$domain" "$dc1" "$dc2"; then
         if ! prompt_confirm "Kiểm tra kết nối có cảnh báo. Bạn có vẫn muốn tiếp tục Join AD?" "N"; then
             msg_warn "Hủy thao tác Join AD."
@@ -225,33 +242,32 @@ EOF
     # Remove any stale keytab before joining
     rm -f /etc/krb5.keytab
 
-    # 9. Execute AD Join strictly targeting DC1
-    msg_info "Đang kết nối và xác thực trực tiếp với Domain Controller [${dc1}] (${domain})..."
+    # 10. Execute AD Join strictly targeting DC FQDN
+    msg_info "Đang kết nối và xác thực trực tiếp với Domain Controller [${dc_fqdn}] (${domain})..."
     local join_output=""
     local join_status=0
 
-    # Primary method: adcli join with explicit --domain-controller flag
-    # This guarantees adcli connects ONLY to DC1 and never queries off-site DCs via DNS SRV
-    msg_info "Phương thức 1: Gia nhập AD qua adcli join trỏ trực tiếp Domain Controller [${dc1}]..."
+    # Primary method: adcli join targeting the discovered DC FQDN (satisfies Kerberos SPN requirement)
+    msg_info "Phương thức 1: Gia nhập AD qua adcli join trỏ Domain Controller [${dc_fqdn}]..."
     join_output=$(printf "%s" "$admin_pass" | adcli join \
         --domain="$domain" \
-        --domain-controller="$dc1" \
+        --domain-controller="$dc_fqdn" \
         --login-user="$clean_admin_user" \
         --stdin-password \
         --verbose 2>&1) || join_status=$?
 
-    # Fallback method: if adcli join fails, attempt realm join directly specifying DC1 IP
+    # Fallback method: if FQDN failed, attempt with IP or realm join
     if [[ $join_status -ne 0 ]]; then
         msg_warn "Phương thức 1 gặp lỗi (Mã: $join_status), thử phương thức 2 qua realm join..."
         local realm_out=""
         local realm_status=0
-        realm_out=$(echo "$admin_pass" | realm join "$dc1" \
+        realm_out=$(echo "$admin_pass" | realm join "$dc_fqdn" \
             -U "$clean_admin_user" \
             --install=/ \
             --verbose 2>&1) || realm_status=$?
         
         if [[ $realm_status -ne 0 ]]; then
-            msg_warn "realm join với IP DC gặp lỗi, thử realm join với domain ${domain}..."
+            msg_warn "realm join với DC FQDN gặp lỗi, thử realm join với domain ${domain}..."
             local r_out2=""
             r_out2=$(echo "$admin_pass" | realm join "$domain" \
                 -U "$clean_admin_user" \
@@ -275,9 +291,9 @@ EOF
     if [[ $join_status -eq 0 ]]; then
         msg_ok "========================================================="
         msg_ok "CHÚC MỪNG! ZORIN OS ĐÃ GIA NHẬP ACTIVE DIRECTORY THÀNH CÔNG!"
-        msg_ok "Domain Controller đã kết nối: ${dc1}"
+        msg_ok "Domain Controller đã kết nối: ${dc_fqdn} (${dc1})"
         msg_ok "========================================================="
-        log_message "SUCCESS" "Joined Active Directory domain: $domain on DC $dc1 with user $clean_admin_user"
+        log_message "SUCCESS" "Joined Active Directory domain: $domain on DC $dc_fqdn with user $clean_admin_user"
         
         # Configure SSSD to lock to dc1 and dc2
         msg_info "Tiến hành cấu hình SSSD ghim cứng Domain Controller [${dc1}]..."
@@ -294,7 +310,19 @@ EOF
         msg_err "Gia nhập Active Directory THẤT BẠI (Mã lỗi: $join_status)!"
         echo -e "${C_RED}Chi tiết lỗi:${C_RESET}"
         echo "$join_output" | grep -v -i "password" || true
-        log_message "ERROR" "Failed to join domain $domain on DC $dc1 with user $clean_admin_user"
+
+        if echo "$join_output" | grep -qi "Insufficient permissions"; then
+            echo -e "\n${C_YELLOW}=== HƯỚNG DẪN XỬ LÝ LỖI PHÂN QUYỀN (INSUFFICIENT PERMISSIONS) ===${C_RESET}"
+            echo -e "  1. Tài khoản AD [${clean_admin_user}] đã xác thực mật khẩu THÀNH CÔNG."
+            echo -e "  2. Tuy nhiên tài khoản này không có quyền tạo hoặc ghi đè tài khoản máy tính [$(hostname -s)] trong Active Directory."
+            echo -e "  3. Cách khắc phục:"
+            echo -e "     - Mở 'Active Directory Users and Computers' trên Windows Server."
+            echo -e "     - Tìm tài khoản máy [$(hostname -s)] trong OU (hoặc CN=Computers) và XÓA BỎ (Delete) hoặc Reset tài khoản này."
+            echo -e "     - Hoặc sử dụng tài khoản có quyền Domain Admin để thực hiện Join."
+            echo -e "=================================================================\n"
+        fi
+
+        log_message "ERROR" "Failed to join domain $domain on DC $dc_fqdn with user $clean_admin_user"
         return "$ERR_AD_JOIN"
     fi
 }
