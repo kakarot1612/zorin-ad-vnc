@@ -35,6 +35,8 @@ source "$LIB_DIR/smb_share.sh"
 source "$LIB_DIR/printer_manager.sh"
 # shellcheck source=lib/bamboo_setup.sh
 source "$LIB_DIR/bamboo_setup.sh"
+# shellcheck source=lib/app_installer.sh
+source "$LIB_DIR/app_installer.sh"
 
 show_system_info() {
     msg_step "THÔNG TIN HỆ THỐNG (SYSTEM INFORMATION)"
@@ -198,11 +200,17 @@ automated_quick_setup() {
     install_vnc_systemd_service
 
     # Step 6: Install & Configure Bamboo Vietnamese Input Method
-    msg_step "[BƯỚC 6/7] CÀI ĐẶT BỘ GÕ TIẾNG VIỆT BAMBOO TOÀN HỆ THỐNG"
+    msg_step "[BƯỚC 6/8] CÀI ĐẶT BỘ GÕ TIẾNG VIỆT BAMBOO TOÀN HỆ THỐNG"
     setup_bamboo_system_wide
 
-    # Step 7: Health check
-    msg_step "[BƯỚC 7/7] KIỂM TRA TOÀN DIỆN HỆ THỐNG"
+    # Step 7: Install Essential Enterprise Apps (Chrome, Zalo, WeChat, UltraViewer, Chinese Fonts & Input)
+    msg_step "[BƯỚC 7/8] CÀI ĐẶT ỨNG DỤNG DOANH NGHIỆP CƠ BẢN (CHROME, ZALO, WECHAT, ULTRAVIEWER...)"
+    if prompt_confirm "Bạn có muốn cài đặt toàn bộ gói ứng dụng cơ bản (Chrome, Zalo, WeChat, UltraViewer, Font & Bộ gõ tiếng Trung)?" "Y"; then
+        install_all_essential_apps
+    fi
+
+    # Step 8: Health check
+    msg_step "[BƯỚC 8/8] KIỂM TRA TOÀN DIỆN HỆ THỐNG"
     run_health_check
 
     msg_ok "========================================================="
@@ -231,10 +239,11 @@ main_menu() {
         echo -e " ${C_GREEN}[4]${C_RESET}  Gia nhập Active Directory (Join AD - Nhập user/pass AD Admin)"
         echo -e " ${C_GREEN}[5]${C_RESET}  Cấu hình xác thực SSSD & Tự tạo thư mục Home (PAM mkhomedir)"
         echo -e " ${C_GREEN}[6]${C_RESET}  Cấu hình GDM3 ép sử dụng Xorg (Tắt Wayland bắt buộc cho VNC)"
-        echo -e " ${C_DIM}------------------ ĐIỀU KHIỂN TỪ XA VÀ BỘ GÕ TIẾNG VIỆT ----------------${C_RESET}"
+        echo -e " ${C_DIM}------------------ ĐIỀU KHIỂN TỪ XA (REMOTE SUPPORT) ------------------${C_RESET}"
         echo -e " ${C_GREEN}[7]${C_RESET}  Cài đặt & Kích hoạt dịch vụ x11vnc (Remote Support cho mọi user)"
         echo -e " ${C_GREEN}[8]${C_RESET}  Đặt / Thay đổi mật khẩu kết nối VNC an toàn"
-        echo -e " ${C_GREEN}[9]${C_RESET}  Cài đặt bộ gõ tiếng Việt IBus-Bamboo cho TẤT CẢ người dùng AD"
+        echo -e " ${C_DIM}---------------- CÀI ĐẶT ỨNG DỤNG DOANH NGHIỆP & BỘ GÕ ----------------${C_RESET}"
+        echo -e " ${C_CYAN}${C_BOLD}[9]  Cài đặt Ứng dụng Cơ bản (Chrome, Zalo, WeChat, UltraViewer, Bộ gõ & Font)${C_RESET}"
         echo -e " ${C_DIM}----------------- TÀI NGUYÊN DOANH NGHIỆP & MÁY IN MẠNG -----------------${C_RESET}"
         echo -e " ${C_GREEN}[10]${C_RESET} Quản lý Thư mục chia sẻ mạng Windows (SMB/CIFS File Shares)"
         echo -e " ${C_GREEN}[11]${C_RESET} Quản lý Máy in chia sẻ qua mạng (Windows Print Server / IP CUPS)"
@@ -265,7 +274,7 @@ main_menu() {
             6)  configure_gdm_xorg; press_enter_to_continue ;;
             7)  install_vnc_systemd_service; press_enter_to_continue ;;
             8)  setup_vnc_password; press_enter_to_continue ;;
-            9)  bamboo_management_menu; press_enter_to_continue ;;
+            9)  enterprise_apps_menu; press_enter_to_continue ;;
             10) smb_file_share_menu; press_enter_to_continue ;;
             11) printer_manager_menu; press_enter_to_continue ;;
             12) run_health_check; press_enter_to_continue ;;
@@ -314,6 +323,7 @@ show_help() {
     echo "  --share               Mở menu quản lý Thư mục chia sẻ mạng (SMB/CIFS)"
     echo "  --printer             Mở menu quản lý Máy in chia sẻ qua mạng"
     echo "  --bamboo              Cài đặt & Cấu hình bộ gõ tiếng Việt Bamboo toàn hệ thống"
+    echo "  --apps                Mở menu quản lý & Cài đặt Ứng dụng Doanh nghiệp Cơ bản"
     echo "  --help, -h            Hiển thị trợ giúp này"
     echo ""
 }
@@ -361,6 +371,10 @@ else
         --bamboo)
             check_root
             bamboo_management_menu
+            ;;
+        --apps)
+            check_root
+            enterprise_apps_menu
             ;;
         --help|-h)
             show_help
