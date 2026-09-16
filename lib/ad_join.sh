@@ -251,7 +251,9 @@ EOF
     msg_info "Phương thức 1: Gia nhập AD qua adcli join trỏ Domain Controller [${dc_fqdn}]..."
     join_output=$(printf "%s" "$admin_pass" | adcli join \
         --domain="$domain" \
+        --domain-realm="${domain^^}" \
         --domain-controller="$dc_fqdn" \
+        --computer-name="$(hostname -s)" \
         --login-user="$clean_admin_user" \
         --stdin-password \
         --verbose 2>&1) || join_status=$?
