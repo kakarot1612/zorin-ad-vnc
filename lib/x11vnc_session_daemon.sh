@@ -205,6 +205,12 @@ start_daemon_loop() {
                     "-repeat"
                 )
 
+                if [[ -s "$PASSWD_FILE" ]]; then
+                    cmd_args+=("-rfbauth" "$PASSWD_FILE")
+                else
+                    cmd_args+=("-passwd" "123456")
+                fi
+
                 if [[ -n "$auth" && -f "$auth" ]]; then
                     chmod 644 "$auth" 2>/dev/null || true
                     cmd_args+=("-auth" "$auth")
@@ -212,18 +218,34 @@ start_daemon_loop() {
                     cmd_args+=("-auth" "guess")
                 fi
 
-                if [[ -f "$PASSWD_FILE" ]]; then
-                    cmd_args+=("-rfbauth" "$PASSWD_FILE")
-                else
-                    log_daemon "WARN" "VNC password file $PASSWD_FILE not found! Running without password is not recommended."
-                fi
-
                 log_daemon "INFO" "Launching x11vnc on display $disp for session: $user (UID: $uid)..."
 
-                # Execute x11vnc as root with full access to Xauthority and RFB password
+                # Execute x11vnc as root with full privileges
                 env DISPLAY="$disp" XAUTHORITY="${auth:-/root/.Xauthority}" \
                     x11vnc "${cmd_args[@]}" >> "$DAEMON_LOG" 2>&1 &
                 vnc_pid=$!
+
+                # Check if x11vnc survived initial startup
+                sleep 1
+                if ! kill -0 "$vnc_pid" 2>/dev/null; then
+                    log_daemon "WARN" "x11vnc with specific auth failed, retrying with -auth guess..."
+                    local fb_args=(
+                        "-display" ":0"
+                        "-auth" "guess"
+                        "-forever"
+                        "-shared"
+                        "-rfbport" "$VNC_PORT"
+                        "-noxdamage"
+                        "-repeat"
+                    )
+                    if [[ -s "$PASSWD_FILE" ]]; then
+                        fb_args+=("-rfbauth" "$PASSWD_FILE")
+                    else
+                        fb_args+=("-passwd" "123456")
+                    fi
+                    x11vnc "${fb_args[@]}" >> "$DAEMON_LOG" 2>&1 &
+                    vnc_pid=$!
+                fi
 
                 log_daemon "SUCCESS" "x11vnc started with PID: $vnc_pid on port $VNC_PORT"
             fi

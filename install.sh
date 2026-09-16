@@ -32,11 +32,15 @@ if command -v x11vnc >/dev/null 2>&1; then
     echo -e "\033[0;32m[✓ OK]\033[0m Gói x11vnc đã sẵn sàng: $(x11vnc -version 2>&1 | head -n 1)"
 fi
 
-# 3. Ensure VNC default password exists
+# 3. Ensure VNC default password exists and is valid
 mkdir -p /etc/x11vnc
-if [[ ! -f /etc/x11vnc/vncpwd ]]; then
+chmod 755 /etc/x11vnc
+if [[ ! -s /etc/x11vnc/vncpwd ]]; then
     if command -v x11vnc >/dev/null 2>&1; then
         x11vnc -storepasswd "123456" /etc/x11vnc/vncpwd >/dev/null 2>&1 || true
+        if [[ ! -s /etc/x11vnc/vncpwd ]]; then
+            printf "123456\n123456\n" | x11vnc -storepasswd /etc/x11vnc/vncpwd >/dev/null 2>&1 || true
+        fi
         chmod 644 /etc/x11vnc/vncpwd 2>/dev/null || true
         echo -e "\033[0;32m[✓ OK]\033[0m Đã tạo mật khẩu VNC mặc định: /etc/x11vnc/vncpwd (123456)"
     fi
@@ -51,11 +55,29 @@ echo -e "\033[0;32m[✓ OK]\033[0m Đã cài đặt daemon script vào: $DAEMON_
 cp "$INSTALL_DIR/systemd/zorin-x11vnc.service" "$SERVICE_PATH"
 ln -sf "$SERVICE_PATH" /etc/systemd/system/x11vnc.service
 systemctl daemon-reload
-systemctl enable "$SERVICE_PATH" 2>/dev/null || true
+systemctl enable zorin-x11vnc.service 2>/dev/null || true
 systemctl restart zorin-x11vnc.service 2>/dev/null || true
 echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: zorin-x11vnc (Alias: x11vnc.service)"
 
-# 6. Create wrapper / symlink for global command 'zorin-ad-vnc'
+# 6. Enable NetBIOS & LLMNR (so other PCs can ping this computer by hostname)
+local_h=$(hostname -s)
+if [[ -f /etc/samba/smb.conf ]]; then
+    if ! grep -q "netbios name" /etc/samba/smb.conf; then
+        sed -i "/\[global\]/a \   netbios name = ${local_h^^}\n   disable netbios = no" /etc/samba/smb.conf 2>/dev/null || true
+    fi
+    systemctl enable --now nmbd 2>/dev/null || true
+    systemctl restart nmbd 2>/dev/null || true
+fi
+mkdir -p /etc/systemd/resolved.conf.d 2>/dev/null || true
+cat > /etc/systemd/resolved.conf.d/llmnr.conf <<EOF
+[Resolve]
+LLMNR=yes
+MulticastDNS=yes
+EOF
+systemctl restart systemd-resolved 2>/dev/null || true
+echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt phản hồi NetBIOS (nmbd) & LLMNR cho tên máy: ${local_h^^}"
+
+# 7. Create wrapper / symlink for global command 'zorin-ad-vnc'
 cat > "$BIN_PATH" <<EOF
 #!/usr/bin/env bash
 exec bash "$INSTALL_DIR/zorin-ad-vnc.sh" "\$@"
