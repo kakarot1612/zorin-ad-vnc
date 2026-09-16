@@ -29,11 +29,26 @@ configure_sssd() {
         backup_file "$SSSD_CONF" "sssd"
     fi
 
-    # Determine Domain Name
-    local domain
+    # Determine Domain Name and DC IPs
+    local domain=""
+    local dc1=""
+    local dc2=""
+    if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        domain="${DOMAIN:-bestpacific.com}"
+        dc1="${DC1:-10.0.60.19}"
+        dc2="${DC2:-10.0.60.20}"
+    fi
+
     local current_realm
-    current_realm=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
-    prompt_with_default "Tên Active Directory Domain" "${current_realm:-bestpacific.com}" domain
+    current_realm=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+    prompt_with_default "Tên Active Directory Domain" "${domain:-${current_realm:-bestpacific.com}}" domain
+    prompt_with_default "IP Domain Controller chính (Site cục bộ)" "${dc1:-10.0.60.19}" dc1
+    prompt_with_default "IP Domain Controller phụ (Site cục bộ - Enter để bỏ qua)" "${dc2:-10.0.60.20}" dc2
+
+    local ad_servers="$dc1"
+    [[ -n "$dc2" ]] && ad_servers="${dc1}, ${dc2}"
 
     # GPO Mode option
     echo ""
@@ -52,7 +67,7 @@ configure_sssd() {
     fi
 
     # Check if domain section exists or build a clean configuration
-    msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF}..."
+    msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF} (Ghim DC: ${ad_servers})..."
     
     cat > "$SSSD_CONF" <<EOF
 [sssd]
@@ -66,6 +81,11 @@ access_provider = ad
 auth_provider = ad
 chpass_provider = ad
 
+# Ghim cứng Domain Controller cục bộ để ngăn chặn kết nối tới DC ngoài site
+ad_server = ${ad_servers}
+ad_domain = ${domain}
+krb5_realm = ${domain^^}
+
 # Tùy chọn Home Directory và tên người dùng ngắn
 fallback_homedir = /home/%u@%d
 use_fully_qualified_names = False
@@ -75,6 +95,7 @@ ${gpo_setting}
 
 # Dynamic DNS Update to Windows Active Directory DNS Server
 dyndns_update = True
+dyndns_server = ${dc1}
 dyndns_refresh_interval = 14400
 dyndns_update_ptr = True
 dyndns_ttl = 3600
@@ -90,6 +111,16 @@ EOF
     chmod 600 "$SSSD_CONF"
     chown root:root "$SSSD_CONF"
     msg_ok "Đã phân quyền an toàn 0600 cho ${SSSD_CONF}"
+
+    # Đảm bảo /etc/nsswitch.conf có sss
+    if [[ -f /etc/nsswitch.conf ]]; then
+        for db in passwd group shadow; do
+            if ! grep -E "^${db}:.*sss" /etc/nsswitch.conf >/dev/null 2>&1; then
+                sed -i "/^${db}:/ s/$/ sss/" /etc/nsswitch.conf 2>/dev/null || true
+            fi
+        done
+        msg_ok "Đã đảm bảo /etc/nsswitch.conf kích hoạt phân giải SSSD."
+    fi
 
     # Clear SSSD cache and restart service
     msg_info "Đang xóa SSSD cache và khởi động lại dịch vụ SSSD..."
@@ -179,16 +210,26 @@ register_ad_dns_and_netbios() {
 
     # Determine Local Domain Controller / DNS Server (Avoid connecting to remote 10.0.68.x across WAN)
     local local_dc=""
-    local ns_candidates=()
-    if [[ -f /etc/resolv.conf ]]; then
-        mapfile -t ns_candidates < <(grep -E '^nameserver' /etc/resolv.conf | awk '{print $2}' | grep -v '127.0.0.53')
+    if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        local_dc="${DC1}"
+        domain="${DOMAIN:-$domain}"
     fi
-    for ns in "${ns_candidates[@]}"; do
-        if check_port_open "$ns" 53 2; then
-            local_dc="$ns"
-            break
+
+    if [[ -z "$local_dc" ]]; then
+        local ns_candidates=()
+        if [[ -f /etc/resolv.conf ]]; then
+            mapfile -t ns_candidates < <(grep -E '^nameserver' /etc/resolv.conf | awk '{print $2}' | grep -v '127.0.0.53')
         fi
-    done
+        for ns in "${ns_candidates[@]}"; do
+            if check_port_open "$ns" 53 2; then
+                local_dc="$ns"
+                break
+            fi
+        done
+    fi
+
     if [[ -z "$local_dc" ]]; then
         if check_port_open "10.0.60.19" 53 2; then
             local_dc="10.0.60.19"

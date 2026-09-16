@@ -93,11 +93,14 @@ run_dns_ad_check() {
     done
 
     # 4. Run realm discover
-    msg_info "4. Thử nghiệm 'realm discover ${domain}'..."
+    msg_info "4. Thử nghiệm 'realm discover' với Domain Controller [${dc1}]..."
     if command -v realm >/dev/null 2>&1; then
         local discover_out
-        if discover_out=$(realm discover "$domain" 2>&1); then
-            msg_ok "Realm discover thành công:"
+        if discover_out=$(realm discover "$dc1" 2>&1); then
+            msg_ok "Realm discover qua DC ${dc1} thành công:"
+            echo -e "${C_DIM}${discover_out}${C_RESET}"
+        elif discover_out=$(realm discover "$domain" 2>&1); then
+            msg_ok "Realm discover qua Domain ${domain} thành công:"
             echo -e "${C_DIM}${discover_out}${C_RESET}"
         else
             msg_err "Realm discover thất bại!"

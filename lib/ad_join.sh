@@ -85,15 +85,22 @@ leave_active_directory() {
     local admin_pass=""
     prompt_secure_password "Nhập mật khẩu cho ${admin_user} (Enter để bỏ qua mật khẩu)" admin_pass false
 
+    # Sanitize admin_user: strip DOMAIN\ or DOMAIN/ prefix and @DOMAIN suffix
+    local clean_admin_user="$admin_user"
+    clean_admin_user="${clean_admin_user#*\\}"
+    clean_admin_user="${clean_admin_user#*/}"
+    clean_admin_user="${clean_admin_user%@*}"
+
     msg_info "Đang thực hiện realm leave..."
     if [[ -n "$admin_pass" ]]; then
-        echo "$admin_pass" | realm leave "$current_realm" -U "$admin_user" 2>&1
+        echo "$admin_pass" | realm leave "$current_realm" -U "$clean_admin_user" 2>&1
     else
         realm leave "$current_realm" 2>&1
     fi
 
     if [[ -z "$(realm list 2>/dev/null)" ]]; then
         msg_ok "Đã rời khỏi Active Directory thành công."
+        rm -f /etc/zorin-ad-vnc/ad_dc.conf /etc/krb5.keytab 2>/dev/null || true
     else
         msg_warn "Kiểm tra lại realm list, có thể cần gỡ bỏ thủ công bằng realm leave."
     fi
@@ -128,14 +135,66 @@ join_active_directory() {
     local admin_pass
 
     prompt_with_default "Nhập AD Domain FQDN" "bestpacific.com" domain
-    prompt_with_default "Nhập IP AD Domain Controller 1" "10.0.60.19" dc1
-    prompt_with_default "Nhập IP AD Domain Controller 2" "10.0.60.20" dc2
+    prompt_with_default "Nhập IP AD Domain Controller 1 (Site cục bộ)" "10.0.60.19" dc1
+    prompt_with_default "Nhập IP AD Domain Controller 2 (Site cục bộ)" "10.0.60.20" dc2
     prompt_with_default "Nhập tên tài khoản AD Administrator" "Administrator" admin_user
     
     # Prompt password securely - hidden characters, no logging
     prompt_secure_password "Nhập mật khẩu cho tài khoản AD [${admin_user}]" admin_pass false
 
-    # 4. Connectivity Check
+    # 4. Sanitize admin_user: strip any DOMAIN\ or DOMAIN/ prefix and @domain suffix
+    local clean_admin_user="$admin_user"
+    clean_admin_user="${clean_admin_user#*\\}"
+    clean_admin_user="${clean_admin_user#*/}"
+    clean_admin_user="${clean_admin_user%@*}"
+    if [[ "$clean_admin_user" != "$admin_user" ]]; then
+        msg_info "Tài khoản xác thực AD: [${clean_admin_user}] (đã chuẩn hóa từ '${admin_user}')"
+    else
+        msg_info "Tài khoản xác thực AD: [${clean_admin_user}]"
+    fi
+
+    # 5. Save DC mapping persistently so SSSD and DNS updater always use the specified local DCs
+    mkdir -p /etc/zorin-ad-vnc
+    cat > /etc/zorin-ad-vnc/ad_dc.conf <<EOF
+DOMAIN=${domain}
+DC1=${dc1}
+DC2=${dc2}
+EOF
+
+    # 6. Pre-configure /etc/krb5.conf to PIN KDC strictly to DC1 (and DC2)
+    # This prevents Kerberos from doing DNS SRV lookups and hitting off-site WAN DCs (e.g. 10.0.193.x / 10.0.68.x)
+    msg_info "Ghim cấu hình Kerberos KDC trực tiếp vào Domain Controller [${dc1}]..."
+    cat > /etc/krb5.conf <<EOF
+[libdefaults]
+    default_realm = ${domain^^}
+    dns_lookup_realm = false
+    dns_lookup_kdc = false
+    ticket_lifetime = 24h
+    renew_lifetime = 7d
+    forwardable = true
+
+[realms]
+    ${domain^^} = {
+        kdc = ${dc1}
+$([[ -n "$dc2" ]] && echo "        kdc = ${dc2}")
+        admin_server = ${dc1}
+        default_domain = ${domain,,}
+    }
+
+[domain_realm]
+    .${domain,,} = ${domain^^}
+    ${domain,,} = ${domain^^}
+EOF
+
+    # 7. Update /etc/resolv.conf and /etc/hosts with local DC1
+    if [[ -f /etc/resolv.conf ]] && ! grep -q "^nameserver[[:space:]]*${dc1}" /etc/resolv.conf; then
+        sed -i "1s/^/nameserver ${dc1}\n/" /etc/resolv.conf 2>/dev/null || true
+    fi
+    if ! grep -E "^[[:space:]]*${dc1}[[:space:]]" /etc/hosts >/dev/null 2>&1; then
+        echo -e "${dc1}\t${domain}" >> /etc/hosts
+    fi
+
+    # 8. Connectivity Check
     if ! run_dns_ad_check "$domain" "$dc1" "$dc2"; then
         if ! prompt_confirm "Kiểm tra kết nối có cảnh báo. Bạn có vẫn muốn tiếp tục Join AD?" "N"; then
             msg_warn "Hủy thao tác Join AD."
@@ -143,34 +202,79 @@ join_active_directory() {
         fi
     fi
 
-    # 5. Execute realm join safely via stdin pipe
-    msg_info "Đang kết nối và xác thực với Active Directory ${domain}..."
-    local join_output
+    # Remove any stale keytab before joining
+    rm -f /etc/krb5.keytab
+
+    # 9. Execute AD Join strictly targeting DC1
+    msg_info "Đang kết nối và xác thực trực tiếp với Domain Controller [${dc1}] (${domain})..."
+    local join_output=""
     local join_status=0
 
-    # Execute realm join piping password into stdin
-    join_output=$(echo "$admin_pass" | realm join "$domain" \
-        -U "$admin_user" \
-        --install=/ \
+    # Primary method: adcli join with explicit --domain-controller flag
+    # This guarantees adcli connects ONLY to DC1 and never queries off-site DCs via DNS SRV
+    msg_info "Phương thức 1: Gia nhập AD qua adcli join trỏ trực tiếp Domain Controller [${dc1}]..."
+    join_output=$(printf "%s" "$admin_pass" | adcli join \
+        --domain="$domain" \
+        --domain-controller="$dc1" \
+        --login-user="$clean_admin_user" \
+        --stdin-password \
         --verbose 2>&1) || join_status=$?
+
+    # Fallback method: if adcli join fails, attempt realm join directly specifying DC1 IP
+    if [[ $join_status -ne 0 ]]; then
+        msg_warn "Phương thức 1 gặp lỗi (Mã: $join_status), thử phương thức 2 qua realm join..."
+        local realm_out=""
+        local realm_status=0
+        realm_out=$(echo "$admin_pass" | realm join "$dc1" \
+            -U "$clean_admin_user" \
+            --install=/ \
+            --verbose 2>&1) || realm_status=$?
+        
+        if [[ $realm_status -ne 0 ]]; then
+            msg_warn "realm join với IP DC gặp lỗi, thử realm join với domain ${domain}..."
+            local r_out2=""
+            r_out2=$(echo "$admin_pass" | realm join "$domain" \
+                -U "$clean_admin_user" \
+                --install=/ \
+                --verbose 2>&1) || true
+            realm_out+=$'\n'"$r_out2"
+        fi
+        join_output+=$'\n'"$realm_out"
+    fi
 
     # Clear password from memory variable immediately
     unset admin_pass
 
+    # Verify if keytab or realm exists
+    if [[ -f /etc/krb5.keytab && -s /etc/krb5.keytab ]]; then
+        join_status=0
+    elif realm list 2>/dev/null | grep -qi "$domain"; then
+        join_status=0
+    fi
+
     if [[ $join_status -eq 0 ]]; then
         msg_ok "========================================================="
         msg_ok "CHÚC MỪNG! ZORIN OS ĐÃ GIA NHẬP ACTIVE DIRECTORY THÀNH CÔNG!"
+        msg_ok "Domain Controller đã kết nối: ${dc1}"
         msg_ok "========================================================="
-        log_message "SUCCESS" "Joined Active Directory domain: $domain with user $admin_user"
+        log_message "SUCCESS" "Joined Active Directory domain: $domain on DC $dc1 with user $clean_admin_user"
         
+        # Configure SSSD to lock to dc1 and dc2
+        msg_info "Tiến hành cấu hình SSSD ghim cứng Domain Controller [${dc1}]..."
+        configure_sssd
+
+        # Configure PAM mkhomedir
+        configure_pam_mkhomedir
+
         # Display realm information
-        realm list
+        echo ""
+        realm list 2>/dev/null || true
         return 0
     else
         msg_err "Gia nhập Active Directory THẤT BẠI (Mã lỗi: $join_status)!"
-        echo -e "${C_RED}Chi tiết lỗi từ realm:${C_RESET}"
+        echo -e "${C_RED}Chi tiết lỗi:${C_RESET}"
         echo "$join_output" | grep -v -i "password" || true
-        log_message "ERROR" "Failed to join domain $domain with user $admin_user"
+        log_message "ERROR" "Failed to join domain $domain on DC $dc1 with user $clean_admin_user"
         return "$ERR_AD_JOIN"
     fi
 }
