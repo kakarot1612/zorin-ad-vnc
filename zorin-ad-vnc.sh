@@ -241,15 +241,16 @@ main_menu() {
         echo -e " ${C_DIM}------------------ KIỂM TRA, BẢO TRÌ & SỬA LỖI HỆ THỐNG ----------------${C_RESET}"
         echo -e " ${C_GREEN}[12]${C_RESET} Bảng kiểm tra tổng quan hệ thống (Health Check Dashboard)"
         echo -e " ${C_GREEN}[13]${C_RESET} Sửa lỗi phân quyền thư mục Home cho người dùng AD (Repair Home)"
-        echo -e " ${C_GREEN}[14]${C_RESET} Kiểm tra đăng nhập tài khoản AD / Vé Kerberos (Test AD User)"
-        echo -e " ${C_GREEN}[15]${C_RESET} Xem nhật ký hoạt động hệ thống (System & Service Logs)"
-        echo -e " ${C_GREEN}[16]${C_RESET} Sao lưu & Khôi phục cấu hình hệ thống (Backup & Rollback)"
-        echo -e " ${C_RED}[17]${C_RESET} Rời khỏi Active Directory (Leave AD Domain)"
+        echo -e " ${C_GREEN}[14]${C_RESET} Đăng ký tên máy lên Windows AD DNS & NetBIOS (Để máy khác ping Zorin)"
+        echo -e " ${C_GREEN}[15]${C_RESET} Kiểm tra đăng nhập tài khoản AD / Vé Kerberos (Test AD User)"
+        echo -e " ${C_GREEN}[16]${C_RESET} Xem nhật ký hoạt động hệ thống (System & Service Logs)"
+        echo -e " ${C_GREEN}[17]${C_RESET} Sao lưu & Khôi phục cấu hình hệ thống (Backup & Rollback)"
+        echo -e " ${C_RED}[18]${C_RESET} Rời khỏi Active Directory (Leave AD Domain)"
         echo -e " ${C_BOLD}[0]${C_RESET}  Thoát (Exit)"
         echo -e "${C_BLUE}================================================================${C_RESET}"
 
         local choice
-        prompt_with_default "Nhập lựa chọn của bạn [0-17]" "1" choice
+        prompt_with_default "Nhập lựa chọn của bạn [0-18]" "1" choice
 
         case "$choice" in
             1)  automated_quick_setup; press_enter_to_continue ;;
@@ -269,9 +270,10 @@ main_menu() {
             11) printer_manager_menu; press_enter_to_continue ;;
             12) run_health_check; press_enter_to_continue ;;
             13) repair_user_home_dir; press_enter_to_continue ;;
-            14) test_ad_user; press_enter_to_continue ;;
-            15) view_logs; press_enter_to_continue ;;
-            16)
+            14) register_ad_dns_and_netbios; press_enter_to_continue ;;
+            15) test_ad_user; press_enter_to_continue ;;
+            16) view_logs; press_enter_to_continue ;;
+            17)
                 echo "1) Sao lưu toàn diện (Full Backup)"
                 echo "2) Danh sách bản sao lưu"
                 echo "3) Khôi phục cấu hình (Rollback)"
@@ -284,7 +286,7 @@ main_menu() {
                 esac
                 press_enter_to_continue
                 ;;
-            17) leave_active_directory; press_enter_to_continue ;;
+            18) leave_active_directory; press_enter_to_continue ;;
             0)
                 echo -e "\n${C_CYAN}Cảm ơn bạn đã sử dụng Zorin AD & Enterprise Management Tool! Tạm biệt.${C_RESET}"
                 exit 0
@@ -307,6 +309,7 @@ show_help() {
     echo "  --status              Xem trạng thái AD và x11vnc"
     echo "  --auto-setup          Chạy toàn bộ quy trình thiết lập tự động"
     echo "  --repair [username]   Sửa lỗi quyền Home Directory cho user"
+    echo "  --register-dns        Đăng ký bản ghi tên máy lên Windows AD DNS & NetBIOS"
     echo "  --toggle-gpo          Chuyển đổi chế độ AD GPO Enforcing / Permissive"
     echo "  --share               Mở menu quản lý Thư mục chia sẻ mạng (SMB/CIFS)"
     echo "  --printer             Mở menu quản lý Máy in chia sẻ qua mạng"
@@ -338,6 +341,10 @@ else
         --repair)
             check_root
             repair_user_home_dir "$2"
+            ;;
+        --register-dns)
+            check_root
+            register_ad_dns_and_netbios
             ;;
         --toggle-gpo)
             check_root

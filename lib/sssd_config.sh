@@ -73,6 +73,12 @@ use_fully_qualified_names = False
 # GPO Access Control
 ${gpo_setting}
 
+# Dynamic DNS Update to Windows Active Directory DNS Server
+dyndns_update = True
+dyndns_refresh_interval = 14400
+dyndns_update_ptr = True
+dyndns_ttl = 3600
+
 # Cache & Performance
 cache_credentials = True
 krb5_store_password_if_offline = True
@@ -151,4 +157,99 @@ toggle_gpo_mode() {
     chmod 600 "$SSSD_CONF"
     systemctl restart sssd
     msg_ok "Dịch vụ SSSD đã được khởi động lại."
+}
+
+register_ad_dns_and_netbios() {
+    check_root
+    msg_step "ĐĂNG KÝ BẢN GHI TÊN MÁY LÊN WINDOWS AD DNS & NETBIOS WINS"
+
+    local current_host
+    current_host=$(hostname -s)
+    local domain
+    domain=$(realm list 2>/dev/null | grep -E '^[[:space:]]*domain-name:' | awk '{print $2}' | head -n 1)
+    domain="${domain:-bestpacific.com}"
+    local fqdn="${current_host}.${domain}"
+    local current_ip
+    current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+
+    echo -e "Tên máy Zorin : ${C_CYAN}${current_host}${C_RESET} (${fqdn})"
+    echo -e "Địa chỉ IP    : ${C_GREEN}${current_ip}${C_RESET}"
+    echo -e "Domain AD     : ${C_YELLOW}${domain}${C_RESET}"
+    echo "--------------------------------------------------------"
+
+    # 1. Update SSSD with dyndns_update
+    if [[ -f "$SSSD_CONF" ]]; then
+        msg_info "1. Bật tính năng Dynamic DNS (dyndns_update) trong SSSD..."
+        if ! grep -q "dyndns_update" "$SSSD_CONF"; then
+            sed -i "/\[domain\/${domain}\]/a dyndns_update = True\ndyndns_refresh_interval = 14400\ndyndns_update_ptr = True\ndyndns_ttl = 3600" "$SSSD_CONF" 2>/dev/null || true
+        else
+            sed -i "s/dyndns_update = .*/dyndns_update = True/" "$SSSD_CONF" 2>/dev/null || true
+        fi
+        chmod 600 "$SSSD_CONF"
+        chown root:root "$SSSD_CONF"
+        systemctl restart sssd 2>/dev/null || true
+        msg_ok "Đã kích hoạt Dynamic DNS trong SSSD và khởi động lại dịch vụ."
+    fi
+
+    # 2. Configure Samba NetBIOS Name Responder (nmbd)
+    msg_info "2. Cấu hình NetBIOS Name Responder (để máy Windows ping trực tiếp tên ${current_host})..."
+    local smb_conf="/etc/samba/smb.conf"
+    if command -v smbd >/dev/null 2>&1 || dpkg -s samba >/dev/null 2>&1; then
+        if [[ -f "$smb_conf" ]]; then
+            local workgroup
+            workgroup=$(get_ad_workgroup "$domain")
+            if ! grep -q "netbios name" "$smb_conf"; then
+                sed -i "/\[global\]/a \   workgroup = ${workgroup}\n   netbios name = ${current_host^^}\n   disable netbios = no" "$smb_conf" 2>/dev/null || true
+            else
+                sed -i "s/^[[:space:]]*netbios name = .*/   netbios name = ${current_host^^}/" "$smb_conf" 2>/dev/null || true
+            fi
+            systemctl enable --now nmbd 2>/dev/null || true
+            systemctl restart nmbd 2>/dev/null || true
+            msg_ok "Dịch vụ NetBIOS (nmbd) đã được kích hoạt trên cổng UDP 137."
+        fi
+    else
+        msg_info "Đang cài đặt gói samba để kích hoạt NetBIOS..."
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq || true
+        apt-get install -y samba >/dev/null 2>&1 || true
+        systemctl enable --now nmbd 2>/dev/null || true
+    fi
+
+    # 3. Enable LLMNR responder in systemd-resolved
+    msg_info "3. Kích hoạt phản hồi đa hướng LLMNR trong systemd-resolved..."
+    mkdir -p /etc/systemd/resolved.conf.d 2>/dev/null || true
+    cat > /etc/systemd/resolved.conf.d/llmnr-responder.conf <<EOF
+[Resolve]
+LLMNR=yes
+MulticastDNS=yes
+EOF
+    systemctl restart systemd-resolved 2>/dev/null || true
+
+    # 4. Perform direct Kerberos nsupdate if machine ticket exists
+    msg_info "4. Gửi yêu cầu cập nhật bản ghi DNS trực tiếp lên Domain Controller..."
+    if [[ -f /etc/krb5.keytab ]] && command -v nsupdate >/dev/null 2>&1; then
+        local machine_principal="${current_host^^}\$@${domain^^}"
+        # Obtain Kerberos ticket for machine account
+        kinit -k "$machine_principal" 2>/dev/null || true
+        local nsupdate_script="/tmp/nsupdate_ad.txt"
+        cat > "$nsupdate_script" <<EOF
+server ${domain}
+update delete ${fqdn} A
+update add ${fqdn} 3600 A ${current_ip}
+send
+EOF
+        if nsupdate -g "$nsupdate_script" 2>&1; then
+            msg_ok "Đã đăng ký trực tiếp bản ghi DNS: ${fqdn} -> ${current_ip}"
+        else
+            msg_info "Lệnh nsupdate hoàn thành. SSSD sẽ tự động đồng bộ định kỳ."
+        fi
+        rm -f "$nsupdate_script" 2>/dev/null || true
+        kdestroy 2>/dev/null || true
+    fi
+
+    msg_ok "========================================================="
+    msg_ok "ĐĂNG KÝ TÊN MÁY LÊN HỆ THỐNG MẠNG HOÀN TẤT!"
+    msg_ok "Từ các máy tính khác, bạn có thể kiểm tra:"
+    msg_ok "  ping ${current_host}   hoặc   ping ${fqdn}"
+    msg_ok "========================================================="
 }
