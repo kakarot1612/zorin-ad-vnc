@@ -51,6 +51,9 @@ list_smb_shares_on_server() {
         return 1
     fi
 
+    local server_ip=""
+    check_host_ping_and_resolve "$server_host" "File Server" server_ip || return 1
+
     install_smb_dependencies || return 1
 
     local domain
@@ -160,6 +163,9 @@ mount_smb_share() {
             msg_warn "Địa chỉ server không được để trống. Vui lòng nhập lại."
         fi
     done
+
+    local server_ip=""
+    check_host_ping_and_resolve "$server_host" "File Server" server_ip || return 1
 
     local share_name=""
     while [[ -z "$share_name" ]]; do

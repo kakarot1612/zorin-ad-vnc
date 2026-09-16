@@ -257,5 +257,67 @@ urlencode() {
     fi
 }
 
+# Check DNS name resolution and Ping / network port reachability
+check_host_ping_and_resolve() {
+    local target="$1"
+    local desc="${2:-Máy chủ}"
+    local -n out_ip="$3"
+
+    if [[ -z "$target" ]]; then
+        msg_err "LỖI: Tên máy chủ / IP không được để trống."
+        return 1
+    fi
+
+    msg_info "Đang kiểm tra phân giải tên và kết nối mạng tới [${target}]..."
+
+    local resolved_ip=""
+    if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        resolved_ip="$target"
+    else
+        resolved_ip=$(getent ahosts "$target" 2>/dev/null | awk '{print $1}' | head -n 1)
+        if [[ -z "$resolved_ip" ]]; then
+            resolved_ip=$(host "$target" 2>/dev/null | awk '/has address/ {print $NF}' | head -n 1)
+        fi
+    fi
+
+    if [[ -z "$resolved_ip" ]]; then
+        msg_err "========================================================="
+        msg_err "LỖI: Không thể phân giải tên [${target}] sang địa chỉ IP!"
+        msg_err "Vui lòng kiểm tra lại cấu hình DNS hoặc nhập trực tiếp IP."
+        msg_err "Hệ thống dừng thao tác. Tuyệt đối không kết nối khống!"
+        msg_err "========================================================="
+        return 1
+    fi
+
+    out_ip="$resolved_ip"
+
+    local is_online=false
+    # Check ICMP ping
+    if ping -c 2 -W 2 "$resolved_ip" >/dev/null 2>&1; then
+        is_online=true
+        msg_ok "${desc} [${target}] (${resolved_ip}) phản hồi Ping tốt [ONLINE]."
+    else
+        # Fallback port check if ICMP ping is blocked by firewall (SMB 445/139, CUPS 631, RAW 9100)
+        for port in 445 139 631 9100; do
+            if timeout 2 bash -c "cat < /dev/null > /dev/tcp/${resolved_ip}/${port}" 2>/dev/null; then
+                is_online=true
+                msg_ok "${desc} [${target}] (${resolved_ip}) mở cổng dịch vụ ${port} [ONLINE]."
+                break
+            fi
+        done
+    fi
+
+    if [[ "$is_online" != "true" ]]; then
+        msg_err "========================================================="
+        msg_err "LỖI MẠNG: Không thể Ping hoặc kết nối tới ${desc} [${target}] (${resolved_ip})!"
+        msg_err "Thiết bị có thể đang tắt nguồn, đứt cáp mạng hoặc bị chặn tường lửa."
+        msg_err "Hệ thống dừng thao tác. Tuyệt đối không kết nối khống!"
+        msg_err "========================================================="
+        return 1
+    fi
+
+    return 0
+}
+
 # Initialize logging on load
 init_logging

@@ -220,57 +220,57 @@ main_menu() {
     while true; do
         clear || true
         echo -e "${C_BOLD}${C_BLUE}================================================================${C_RESET}"
-        echo -e "${C_BOLD}${C_WHITE}       ZORIN OS AD JOIN & X11VNC MANAGEMENT TOOL                ${C_RESET}"
+        echo -e "${C_BOLD}${C_WHITE}       ZORIN OS AD JOIN & ENTERPRISE MANAGEMENT TOOL            ${C_RESET}"
         echo -e "${C_DIM}           Hỗ trợ AD Domain: bestpacific.com | OS: Zorin OS      ${C_RESET}"
         echo -e "${C_BOLD}${C_BLUE}================================================================${C_RESET}"
-        echo -e " ${C_GREEN}1.${C_RESET}  System Information              (Thông tin hệ thống)"
-        echo -e " ${C_GREEN}2.${C_RESET}  DNS / AD Connectivity Check     (Kiểm tra DNS/AD Controllers)"
-        echo -e " ${C_GREEN}3.${C_RESET}  Join Active Directory           (Gia nhập AD - User/Pass nhập tay)"
-        echo -e " ${C_GREEN}4.${C_RESET}  Configure SSSD                  (Cấu hình SSSD / AD GPO)"
-        echo -e " ${C_GREEN}5.${C_RESET}  Configure PAM / Home Directory  (Bật pam_mkhomedir tự tạo home)"
-        echo -e " ${C_GREEN}6.${C_RESET}  Configure GDM / Force Xorg      (Ép dùng Xorg thay vì Wayland)"
-        echo -e " ${C_GREEN}7.${C_RESET}  Test AD User                    (Kiểm tra tài khoản AD / kinit)"
-        echo -e " ${C_GREEN}8.${C_RESET}  Set VNC Password                (Đặt mật khẩu VNC an toàn)"
-        echo -e " ${C_GREEN}9.${C_RESET}  Configure Domain User X11VNC    (Cài đặt & Bật Dynamic VNC Service)"
-        echo -e " ${C_GREEN}10.${C_RESET} VNC Service Status              (Trạng thái x11vnc & Port 5900)"
-        echo -e " ${C_GREEN}11.${C_RESET} AD / SSSD Status                (Trạng thái realm & sssd)"
-        echo -e " ${C_GREEN}12.${C_RESET} Repair User Home Directory      (Sửa lỗi quyền root của Home Dir)"
-        echo -e " ${C_GREEN}13.${C_RESET} Health Check Dashboard          (Bảng kiểm tra tổng quan 14 tiêu chí)"
-        echo -e " ${C_GREEN}14.${C_RESET} View Logs                       (Xem nhật ký hệ thống)"
-        echo -e " ${C_GREEN}15.${C_RESET} Backup / Rollback Config        (Sao lưu & Khôi phục cấu hình)"
-        echo -e " ${C_CYAN}16.${C_RESET} Automated Quick Setup           ${C_BOLD}(Chạy tuần tự toàn bộ cho máy mới)${C_RESET}"
-        echo -e " ${C_RED}17.${C_RESET} Leave Active Directory          (Rời khỏi miền AD)"
-        echo -e " ${C_GREEN}18.${C_RESET} Network File Share (SMB/CIFS)  (Quản lý thư mục chia sẻ Windows/AD)"
-        echo -e " ${C_GREEN}19.${C_RESET} Network Printer Manager        (Quản lý máy in CUPS/SMB/IP)"
-        echo -e " ${C_GREEN}20.${C_RESET} Bamboo Vietnamese Input Setup   (Bộ gõ tiếng Việt tự động cho MỌI user)"
-        echo -e " ${C_BOLD}0.${C_RESET}  Exit                            (Thoát công cụ)"
-        echo -e "${C_BLUE}----------------------------------------------------------------${C_RESET}"
+        echo -e " ${C_CYAN}${C_BOLD}[1]  Thiết lập tự động toàn diện cho máy mới (All-in-One Quick Setup)${C_RESET}"
+        echo -e " ${C_DIM}------------------- GIA NHẬP VÀ CẤU HÌNH DOMAIN AD -------------------${C_RESET}"
+        echo -e " ${C_GREEN}[2]${C_RESET}  Kiểm tra DNS & Kết nối Domain Controller (DNS / AD Check)"
+        echo -e " ${C_GREEN}[3]${C_RESET}  Cài đặt các gói phụ thuộc hệ thống (AD / SSSD / VNC / CUPS / SMB)"
+        echo -e " ${C_GREEN}[4]${C_RESET}  Gia nhập Active Directory (Join AD - Nhập user/pass AD Admin)"
+        echo -e " ${C_GREEN}[5]${C_RESET}  Cấu hình xác thực SSSD & Tự tạo thư mục Home (PAM mkhomedir)"
+        echo -e " ${C_GREEN}[6]${C_RESET}  Cấu hình GDM3 ép sử dụng Xorg (Tắt Wayland bắt buộc cho VNC)"
+        echo -e " ${C_DIM}------------------ ĐIỀU KHIỂN TỪ XA VÀ BỘ GÕ TIẾNG VIỆT ----------------${C_RESET}"
+        echo -e " ${C_GREEN}[7]${C_RESET}  Cài đặt & Kích hoạt dịch vụ x11vnc (Remote Support cho mọi user)"
+        echo -e " ${C_GREEN}[8]${C_RESET}  Đặt / Thay đổi mật khẩu kết nối VNC an toàn"
+        echo -e " ${C_GREEN}[9]${C_RESET}  Cài đặt bộ gõ tiếng Việt IBus-Bamboo cho TẤT CẢ người dùng AD"
+        echo -e " ${C_DIM}----------------- TÀI NGUYÊN DOANH NGHIỆP & MÁY IN MẠNG -----------------${C_RESET}"
+        echo -e " ${C_GREEN}[10]${C_RESET} Quản lý Thư mục chia sẻ mạng Windows (SMB/CIFS File Shares)"
+        echo -e " ${C_GREEN}[11]${C_RESET} Quản lý Máy in chia sẻ qua mạng (Windows Print Server / IP CUPS)"
+        echo -e " ${C_DIM}------------------ KIỂM TRA, BẢO TRÌ & SỬA LỖI HỆ THỐNG ----------------${C_RESET}"
+        echo -e " ${C_GREEN}[12]${C_RESET} Bảng kiểm tra tổng quan hệ thống (Health Check Dashboard)"
+        echo -e " ${C_GREEN}[13]${C_RESET} Sửa lỗi phân quyền thư mục Home cho người dùng AD (Repair Home)"
+        echo -e " ${C_GREEN}[14]${C_RESET} Kiểm tra đăng nhập tài khoản AD / Vé Kerberos (Test AD User)"
+        echo -e " ${C_GREEN}[15]${C_RESET} Xem nhật ký hoạt động hệ thống (System & Service Logs)"
+        echo -e " ${C_GREEN}[16]${C_RESET} Sao lưu & Khôi phục cấu hình hệ thống (Backup & Rollback)"
+        echo -e " ${C_RED}[17]${C_RESET} Rời khỏi Active Directory (Leave AD Domain)"
+        echo -e " ${C_BOLD}[0]${C_RESET}  Thoát (Exit)"
+        echo -e "${C_BLUE}================================================================${C_RESET}"
 
         local choice
-        prompt_with_default "Nhập lựa chọn của bạn [0-20]" "13" choice
+        prompt_with_default "Nhập lựa chọn của bạn [0-17]" "1" choice
 
         case "$choice" in
-            1)  show_system_info; press_enter_to_continue ;;
+            1)  automated_quick_setup; press_enter_to_continue ;;
             2)  run_dns_ad_check; press_enter_to_continue ;;
-            3)  join_active_directory; press_enter_to_continue ;;
-            4)  configure_sssd; press_enter_to_continue ;;
-            5)  configure_pam_mkhomedir; press_enter_to_continue ;;
-            6)  configure_gdm_xorg; press_enter_to_continue ;;
-            7)  test_ad_user; press_enter_to_continue ;;
-            8)  setup_vnc_password; press_enter_to_continue ;;
-            9)  install_vnc_systemd_service; press_enter_to_continue ;;
-            10) show_vnc_status; press_enter_to_continue ;;
-            11)
-                echo -e "\n${C_BOLD}--- REALM LIST ---${C_RESET}"
-                realm list 2>/dev/null || true
-                echo -e "\n${C_BOLD}--- SSSD SERVICE ---${C_RESET}"
-                systemctl status sssd --no-pager 2>/dev/null || true
+            3)  install_ad_dependencies; press_enter_to_continue ;;
+            4)  join_active_directory; press_enter_to_continue ;;
+            5)
+                configure_sssd
+                configure_pam_mkhomedir
                 press_enter_to_continue
                 ;;
-            12) repair_user_home_dir; press_enter_to_continue ;;
-            13) run_health_check; press_enter_to_continue ;;
-            14) view_logs; press_enter_to_continue ;;
-            15)
+            6)  configure_gdm_xorg; press_enter_to_continue ;;
+            7)  install_vnc_systemd_service; press_enter_to_continue ;;
+            8)  setup_vnc_password; press_enter_to_continue ;;
+            9)  bamboo_management_menu; press_enter_to_continue ;;
+            10) smb_file_share_menu; press_enter_to_continue ;;
+            11) printer_manager_menu; press_enter_to_continue ;;
+            12) run_health_check; press_enter_to_continue ;;
+            13) repair_user_home_dir; press_enter_to_continue ;;
+            14) test_ad_user; press_enter_to_continue ;;
+            15) view_logs; press_enter_to_continue ;;
+            16)
                 echo "1) Sao lưu toàn diện (Full Backup)"
                 echo "2) Danh sách bản sao lưu"
                 echo "3) Khôi phục cấu hình (Rollback)"
@@ -283,13 +283,9 @@ main_menu() {
                 esac
                 press_enter_to_continue
                 ;;
-            16) automated_quick_setup; press_enter_to_continue ;;
             17) leave_active_directory; press_enter_to_continue ;;
-            18) smb_file_share_menu; press_enter_to_continue ;;
-            19) printer_manager_menu; press_enter_to_continue ;;
-            20) bamboo_management_menu; press_enter_to_continue ;;
             0)
-                echo -e "\n${C_CYAN}Cảm ơn bạn đã sử dụng Zorin AD & X11VNC Management Tool! Tạm biệt.${C_RESET}"
+                echo -e "\n${C_CYAN}Cảm ơn bạn đã sử dụng Zorin AD & Enterprise Management Tool! Tạm biệt.${C_RESET}"
                 exit 0
                 ;;
             *)

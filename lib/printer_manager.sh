@@ -81,24 +81,21 @@ add_network_printer_ip() {
 
     install_printer_dependencies || return 1
 
-    local printer_ip
-    prompt_with_default "Nhập địa chỉ IP của Máy In (VD: 10.0.60.50)" "" printer_ip
+    local printer_input
+    prompt_with_default "Nhập địa chỉ IP hoặc Hostname của Máy In (VD: 10.0.60.50 hoặc printer-it)" "" printer_input
 
-    if [[ -z "$printer_ip" ]]; then
-        msg_err "Địa chỉ IP máy in không được để trống."
+    if [[ -z "$printer_input" ]]; then
+        msg_err "LỖI: Địa chỉ IP / Hostname máy in không được để trống."
         return 1
     fi
 
-    # Quick reachability check
-    msg_info "Đang kiểm tra kết nối mạng tới ${printer_ip}..."
-    if ping -c 1 -W 2 "$printer_ip" >/dev/null 2>&1; then
-        msg_ok "Máy in tại ${printer_ip} đang ONLINE (phản hồi ping tốt)."
-    else
-        msg_warn "Không nhận được phản hồi ping từ ${printer_ip} (có thể do firewall hoặc máy in tắt ICMP ping)."
-    fi
+    local printer_ip=""
+    check_host_ping_and_resolve "$printer_input" "Máy in" printer_ip || return 1
 
     local printer_name
-    prompt_with_default "Nhập Tên Máy In hiển thị (Không dấu, không khoảng trắng, VD: IT_Canon_LBP2900)" "Printer_${printer_ip//./_}" printer_name
+    local default_pname
+    default_pname=$(echo "Printer_${printer_input}" | tr ' ' '_' | tr -cd 'a-zA-Z0-9_-')
+    prompt_with_default "Nhập Tên Máy In hiển thị (Không dấu, không khoảng trắng, VD: IT_Canon_LBP2900)" "$default_pname" printer_name
 
     echo ""
     echo -e "${C_BOLD}Chọn giao thức kết nối tới máy in:${C_RESET}"
@@ -284,6 +281,10 @@ add_windows_shared_printer() {
         return 1
     fi
 
+    # Verify server resolution and reachability (ping & port)
+    local server_ip=""
+    check_host_ping_and_resolve "$print_server" "Windows Print Server" server_ip || return 1
+
     local domain
     domain=$(realm list 2>/dev/null | grep -E '^domain-name:' | awk '{print $2}' | head -n 1)
     domain="${domain:-bestpacific.com}"
@@ -316,89 +317,132 @@ add_windows_shared_printer() {
 
     # Authentication setup for Connecting & Installing Printer Queue
     echo ""
-    echo -e "${C_BOLD}${C_YELLOW}=== XÁC THỰC KẾT NỐI MÁY IN TRÊN WINDOWS PRINT SERVER ===${C_RESET}"
-    echo -e "${C_DIM}Lưu ý: Để kết nối và cài đặt hàng đợi máy in từ Windows Print Server, hệ thống${C_RESET}"
-    echo -e "${C_DIM}yêu cầu tài khoản có quyền Quản trị / Cài đặt máy in trên AD (Domain Admin hoặc IT Admin).${C_RESET}\n"
+    echo -e "${C_BOLD}${C_YELLOW}=== XÁC THỰC QUYỀN KẾT NỐI MÁY IN TRÊN WINDOWS PRINT SERVER ===${C_RESET}"
+    echo -e "${C_DIM}Yêu cầu bắt buộc: Để cài đặt máy in, phải sử dụng tài khoản 'root' local hoặc${C_RESET}"
+    echo -e "${C_DIM}tài khoản AD Quản trị đáp ứng định dạng 'domain\\user' hoặc 'user@domain'.${C_RESET}"
+    echo -e "${C_DIM}Hệ thống sẽ kiểm tra xác thực trực tiếp và từ chối kết nối nếu sai thông tin.${C_RESET}\n"
 
-    local auth_choice
-    if [[ -n "$auth_user" && -n "$auth_pass" ]]; then
-        echo "  1) Nhập tài khoản Quản trị AD (Domain Administrator / IT Admin) [Bắt buộc / Khuyên dùng]"
-        echo "  2) Dùng lại tài khoản duyệt vừa nhập [${auth_user}] (nếu tài khoản này có quyền admin)"
-        echo "  3) Sử dụng vé Kerberos Single Sign-On (krb5 SSO)"
-        echo "  4) Chế độ Khách (Guest / Anonymous)"
-        prompt_with_default "Lựa chọn phương thức xác thực [1-4]" "1" auth_choice
-    else
-        echo "  1) Nhập tài khoản Quản trị AD (Domain Administrator / IT Admin) [Bắt buộc / Khuyên dùng]"
-        echo "  2) Sử dụng vé Kerberos Single Sign-On (krb5 SSO)"
-        echo "  3) Chế độ Khách (Guest / Anonymous)"
-        prompt_with_default "Lựa chọn phương thức xác thực [1-3]" "1" auth_choice
-        if [[ "$auth_choice" == "2" ]]; then
-            auth_choice="3"
-        elif [[ "$auth_choice" == "3" ]]; then
-            auth_choice="4"
+    local auth_user_input=""
+    local auth_pass_input=""
+    local auth_success=false
+    local retry_count=0
+    local max_retries=3
+
+    local default_admin="BESTPACIFIC\\Administrator"
+
+    while [[ $retry_count -lt $max_retries ]]; do
+        echo -e "${C_BOLD}Nhập tài khoản có quyền cài đặt máy in:${C_RESET}"
+        echo -e "  - Định dạng AD Admin : ${C_GREEN}domain\\user${C_RESET} (VD: BESTPACIFIC\\Administrator)"
+        echo -e "    hoặc               : ${C_GREEN}user@domain${C_RESET} (VD: Administrator@bestpacific.com)"
+        echo -e "  - Định dạng Local    : ${C_GREEN}root${C_RESET}"
+
+        prompt_with_default "Tài khoản cài đặt [hoặc 'q' để hủy]" "$default_admin" auth_user_input
+
+        if [[ "$auth_user_input" =~ ^[Qq]$ ]]; then
+            msg_info "Đã hủy thao tác kết nối máy in."
+            return 0
         fi
+
+        if [[ -z "$auth_user_input" ]]; then
+            msg_err "LỖI: Tài khoản không được để trống! Hệ thống từ chối kết nối khống."
+            retry_count=$((retry_count + 1))
+            continue
+        fi
+
+        # Format check: must be 'root' or contain '\' or contain '@'
+        if [[ "$auth_user_input" != "root" && "$auth_user_input" != *"\\"* && "$auth_user_input" != *"@"* ]]; then
+            msg_err "========================================================="
+            msg_err "LỖI ĐỊNH DẠNG: Tài khoản '${auth_user_input}' không hợp lệ!"
+            msg_err "Bắt buộc phải là 'root' hoặc đúng định dạng 'domain\\user' / 'user@domain'."
+            msg_warn "Ví dụ đúng: BESTPACIFIC\\Administrator hoặc Administrator@bestpacific.com"
+            msg_err "========================================================="
+            retry_count=$((retry_count + 1))
+            continue
+        fi
+
+        prompt_secure_password "Mật khẩu cho [${auth_user_input}]" auth_pass_input false
+        if [[ -z "$auth_pass_input" ]]; then
+            msg_err "LỖI: Mật khẩu không được để trống! Hệ thống từ chối kết nối khống."
+            retry_count=$((retry_count + 1))
+            continue
+        fi
+
+        # Verify credentials against Windows Print Server
+        msg_info "Đang kiểm tra xác thực tài khoản [${auth_user_input}] với máy chủ [${print_server}]..."
+        local smb_auth_args=()
+        local clean_user="" clean_dom="" workgroup=""
+
+        if [[ "$auth_user_input" == "root" ]]; then
+            smb_auth_args=("-U" "root")
+            clean_user="root"
+            clean_dom=""
+            workgroup=""
+        elif [[ "$auth_user_input" == *"\\"* ]]; then
+            clean_dom="${auth_user_input%%\\*}"
+            clean_user="${auth_user_input#*\\}"
+            workgroup="$clean_dom"
+            smb_auth_args=("-W" "$clean_dom" "-U" "$clean_user")
+        elif [[ "$auth_user_input" == *"@"* ]]; then
+            clean_user="${auth_user_input%%@*}"
+            clean_dom="${auth_user_input#*@}"
+            workgroup=$(get_ad_workgroup "$clean_dom")
+            smb_auth_args=("-W" "$workgroup" "-U" "$clean_user")
+        fi
+
+        local auth_test_out
+        auth_test_out=$(printf "%s\n" "$auth_pass_input" | smbclient -L "$print_server" "${smb_auth_args[@]}" --option="client min protocol=SMB2" 2>&1 || true)
+        local test_rc=$?
+
+        if [[ "$auth_test_out" =~ "NT_STATUS_LOGON_FAILURE" ]] || \
+           [[ "$auth_test_out" =~ "NT_STATUS_WRONG_PASSWORD" ]] || \
+           [[ "$auth_test_out" =~ "NT_STATUS_ACCOUNT_DISABLED" ]] || \
+           [[ "$auth_test_out" =~ "NT_STATUS_ACCOUNT_LOCKED_OUT" ]] || \
+           [[ "$auth_test_out" =~ "NT_STATUS_NO_SUCH_USER" ]] || \
+           [[ $test_rc -ne 0 && ! "$auth_test_out" =~ "Sharename" ]]; then
+            local err_status
+            err_status=$(echo "$auth_test_out" | grep -o -E 'NT_STATUS_[A-Z_]+' | head -n 1)
+            msg_err "========================================================="
+            msg_err "LỖI XÁC THỰC: Tài khoản hoặc mật khẩu không chính xác!"
+            if [[ -n "$err_status" ]]; then
+                msg_err "Chi tiết mã lỗi từ Server: ${err_status}"
+            fi
+            msg_err "========================================================="
+            retry_count=$((retry_count + 1))
+            continue
+        fi
+
+        auth_success=true
+        msg_ok "Xác thực tài khoản [${auth_user_input}] thành công! Máy chủ cho phép kết nối máy in."
+        break
+    done
+
+    if [[ "$auth_success" != "true" ]]; then
+        msg_err "========================================================="
+        msg_err "KẾT NỐI THẤT BẠI: Quá số lần xác thực không thành công."
+        msg_err "Hệ thống dừng cài đặt. Tuyệt đối không kết nối khống!"
+        msg_err "========================================================="
+        return 1
     fi
 
+    # Build CUPS SMB URI with encoded credentials
     local smb_uri=""
     local url_share_name
     url_share_name=$(urlencode "$share_printer_name")
 
-    if [[ "$auth_choice" == "3" ]]; then
-        smb_uri="smb://${print_server}/${url_share_name}"
-    elif [[ "$auth_choice" == "4" ]]; then
-        smb_uri="smb://guest@${print_server}/${url_share_name}"
-    elif [[ "$auth_choice" == "2" && -n "$auth_user" && -n "$auth_pass" ]]; then
-        local clean_user="${auth_user%@*}"
-        local clean_dom="${auth_user#*@}"
-        local workgroup
-        workgroup=$(get_ad_workgroup "$clean_dom")
+    local enc_pass
+    enc_pass=$(urlencode "$auth_pass_input")
 
-        local enc_workgroup enc_user enc_pass
-        enc_workgroup=$(urlencode "$workgroup")
-        enc_user=$(urlencode "$clean_user")
-        enc_pass=$(urlencode "$auth_pass")
-
-        if [[ -n "$enc_workgroup" ]]; then
-            smb_uri="smb://${enc_workgroup}%5C${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
-        else
-            smb_uri="smb://${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
-        fi
-        unset enc_pass
+    if [[ "$auth_user_input" == "root" ]]; then
+        local enc_usr
+        enc_usr=$(urlencode "root")
+        smb_uri="smb://${enc_usr}:${enc_pass}@${print_server}/${url_share_name}"
     else
-        # Option 1: Admin account with installation privileges
-        echo ""
-        local raw_admin_user
-        prompt_with_default "Tài khoản Quản trị AD có quyền cài đặt (VD: Administrator hoặc it_admin)" "Administrator" raw_admin_user
-        local clean_admin_user clean_admin_domain
-        normalize_ad_user_and_domain "$raw_admin_user" "$domain" clean_admin_user clean_admin_domain
-
-        local admin_pass=""
-        prompt_secure_password "Mật khẩu cho [${clean_admin_user}@${clean_admin_domain}]" admin_pass false
-
-        local workgroup
-        workgroup=$(get_ad_workgroup "$clean_admin_domain")
-
-        msg_info "Đang kiểm tra xác thực quyền tài khoản [${clean_admin_user}] với ${print_server}..."
-        local auth_check
-        auth_check=$(printf "%s\n" "$admin_pass" | smbclient -L "$print_server" -W "$workgroup" -U "$clean_admin_user" --option="client min protocol=SMB2" 2>&1 || true)
-        if [[ "$auth_check" =~ "Sharename" ]]; then
-            msg_ok "Xác thực tài khoản quản trị [${clean_admin_user}] thành công!"
-        elif [[ "$auth_check" =~ "NT_STATUS_LOGON_FAILURE" ]]; then
-            msg_warn "Cảnh báo: Xác thực thất bại với tài khoản [${clean_admin_user}]. Hãy kiểm tra lại mật khẩu."
-        fi
-
-        local enc_workgroup enc_user enc_pass
-        enc_workgroup=$(urlencode "$workgroup")
-        enc_user=$(urlencode "$clean_admin_user")
-        enc_pass=$(urlencode "$admin_pass")
-
-        if [[ -n "$enc_workgroup" ]]; then
-            smb_uri="smb://${enc_workgroup}%5C${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
-        else
-            smb_uri="smb://${enc_user}:${enc_pass}@${print_server}/${url_share_name}"
-        fi
-        unset admin_pass enc_pass
+        local enc_dom enc_usr
+        enc_dom=$(urlencode "${workgroup:-$clean_dom}")
+        enc_usr=$(urlencode "$clean_user")
+        smb_uri="smb://${enc_dom}%5C${enc_usr}:${enc_pass}@${print_server}/${url_share_name}"
     fi
+    unset auth_pass_input enc_pass
 
     # Driver Selection
     echo ""
