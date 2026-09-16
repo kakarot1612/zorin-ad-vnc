@@ -12,7 +12,7 @@ source "$LIB_DIR/common.sh"
 install_printer_dependencies() {
     msg_step "KIỂM TRA VÀ CÀI ĐẶT DỊCH VỤ MÁY IN (CUPS & DRIVERS)"
 
-    local pkgs=(cups cups-client cups-filters printer-driver-all foomatic-db-compressed-ppds smbclient)
+    local pkgs=(cups cups-client cups-filters printer-driver-all printer-driver-fujixerox foomatic-db-compressed-ppds smbclient)
     local missing=()
     for pkg in "${pkgs[@]}"; do
         if ! dpkg -s "$pkg" >/dev/null 2>&1; then
@@ -75,6 +75,186 @@ list_printers() {
     lpstat -v 2>/dev/null || true
 }
 
+select_printer_driver() {
+    local -n out_driver_opt="$1"
+    local -n out_model_desc="$2"
+
+    echo ""
+    echo -e "${C_BOLD}${C_BLUE}================================================================${C_RESET}"
+    echo -e "${C_BOLD}${C_WHITE}           CHỌN MODEL VÀ TRÌNH ĐIỀU KHIỂN (DRIVER)              ${C_RESET}"
+    echo -e "${C_BOLD}${C_BLUE}================================================================${C_RESET}"
+    echo -e " ${C_GREEN}[1]  Fujifilm / Fuji Xerox Apeos Series (Dòng máy phổ biến Cty)${C_RESET}"
+    echo -e " ${C_CYAN}[2]  Generic PCL 6 / PCL XL Color (Máy in Màu HP, Canon, Ricoh...)${C_RESET}"
+    echo -e " ${C_CYAN}[3]  Generic PCL 6 / PCL XL Monochrome (Máy in Đen Trắng HP, Canon...)${C_RESET}"
+    echo -e " [4]  Raw Queue (Gửi dữ liệu thô - Để Windows Server tự xử lý)"
+    echo -e " [5]  IPP Everywhere / Driverless (Chuẩn in mạng Driverless đời mới)"
+    echo -e " [6]  Generic PostScript (Chỉ dùng nếu máy in có chip Adobe PostScript)"
+    echo -e " [7]  Tìm kiếm Model trong kho Driver hệ thống (Search CUPS lpinfo)"
+    echo -e " [8]  Chỉ định file .PPD thủ công từ ổ đĩa"
+    echo "----------------------------------------------------------------"
+
+    local d_main
+    prompt_with_default "Chọn nhóm Driver [1-8]" "1" d_main
+
+    case "$d_main" in
+        1)
+            echo ""
+            echo -e "${C_BOLD}${C_YELLOW}=== DANH SÁCH MODEL FUJIFILM / FUJI XEROX APEOS ===${C_RESET}"
+            echo "  1) Fujifilm Apeos 4830 (Đen trắng / Monochrome)"
+            echo "  2) Fujifilm Apeos 6340 (Đen trắng / Monochrome)"
+            echo "  3) Fujifilm Apeos 3530 (Đen trắng / Monochrome)"
+            echo "  4) Fujifilm Apeos C3370 / ApeosPort-V/VI C3370 (Màu / Color)"
+            echo "  5) Fujifilm Apeos C3570 / ApeosPort-VII C3570 (Màu / Color)"
+            echo "  6) Fujifilm Apeos C3371 / ApeosPort-VI C3371 (Màu / Color)"
+            echo "  7) Fujifilm Apeos C3373 / DocuCentre-V C3373 (Màu / Color)"
+            echo "  8) Dòng Fujifilm / Fuji Xerox Apeos khác"
+            local apeos_choice
+            prompt_with_default "Chọn Model máy in [1-8]" "4" apeos_choice
+
+            # Check if printer-driver-fujixerox is installed
+            if ! dpkg -s printer-driver-fujixerox >/dev/null 2>&1; then
+                msg_info "Đang cài đặt gói bổ trợ printer-driver-fujixerox & foomatic..."
+                export DEBIAN_FRONTEND=noninteractive
+                apt-get update -qq || true
+                apt-get install -y printer-driver-fujixerox foomatic-db-compressed-ppds >/dev/null 2>&1 || true
+            fi
+
+            local pxlcolor_ppd pxlmono_ppd fx_ppd
+            pxlcolor_ppd=$(lpinfo -m 2>/dev/null | grep -E "Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd|pxlcolor.ppd" | head -n 1 | awk '{print $1}')
+            pxlmono_ppd=$(lpinfo -m 2>/dev/null | grep -E "Generic-PCL_6_PCL_XL_Printer-pxlmono.ppd|pxlmono.ppd" | head -n 1 | awk '{print $1}')
+            pxlcolor_ppd="${pxlcolor_ppd:-drv:///sample.drv/laserjet.ppd}"
+            pxlmono_ppd="${pxlmono_ppd:-drv:///sample.drv/laserjet.ppd}"
+
+            case "$apeos_choice" in
+                1)
+                    out_model_desc="Fujifilm Apeos 4830 (Mono PCL6)"
+                    out_driver_opt="-m ${pxlmono_ppd}"
+                    ;;
+                2)
+                    out_model_desc="Fujifilm Apeos 6340 (Mono PCL6)"
+                    out_driver_opt="-m ${pxlmono_ppd}"
+                    ;;
+                3)
+                    out_model_desc="Fujifilm Apeos 3530 (Mono PCL6)"
+                    out_driver_opt="-m ${pxlmono_ppd}"
+                    ;;
+                4)
+                    fx_ppd=$(lpinfo -m 2>/dev/null | grep -i -E "C3370|ApeosPort.*3370" | head -n 1 | awk '{print $1}')
+                    if [[ -n "$fx_ppd" ]]; then
+                        out_driver_opt="-m ${fx_ppd}"
+                    else
+                        out_driver_opt="-m ${pxlcolor_ppd}"
+                    fi
+                    out_model_desc="Fujifilm Apeos C3370 (Color PCL6/XL)"
+                    ;;
+                5)
+                    fx_ppd=$(lpinfo -m 2>/dev/null | grep -i -E "C3570|ApeosPort.*3570" | head -n 1 | awk '{print $1}')
+                    if [[ -n "$fx_ppd" ]]; then
+                        out_driver_opt="-m ${fx_ppd}"
+                    else
+                        out_driver_opt="-m ${pxlcolor_ppd}"
+                    fi
+                    out_model_desc="Fujifilm Apeos C3570 (Color PCL6/XL)"
+                    ;;
+                6)
+                    fx_ppd=$(lpinfo -m 2>/dev/null | grep -i -E "C3371|ApeosPort.*3371" | head -n 1 | awk '{print $1}')
+                    if [[ -n "$fx_ppd" ]]; then
+                        out_driver_opt="-m ${fx_ppd}"
+                    else
+                        out_driver_opt="-m ${pxlcolor_ppd}"
+                    fi
+                    out_model_desc="Fujifilm Apeos C3371 (Color PCL6/XL)"
+                    ;;
+                7)
+                    fx_ppd=$(lpinfo -m 2>/dev/null | grep -i -E "C3373|DocuCentre.*3373|ApeosPort.*3373" | head -n 1 | awk '{print $1}')
+                    if [[ -n "$fx_ppd" ]]; then
+                        out_driver_opt="-m ${fx_ppd}"
+                    else
+                        out_driver_opt="-m ${pxlcolor_ppd}"
+                    fi
+                    out_model_desc="Fujifilm Apeos C3373 (Color PCL6/XL)"
+                    ;;
+                *)
+                    out_model_desc="Fujifilm Apeos Series (Color PCL6/XL)"
+                    out_driver_opt="-m ${pxlcolor_ppd}"
+                    ;;
+            esac
+            ;;
+        2)
+            local pxl_col
+            pxl_col=$(lpinfo -m 2>/dev/null | grep -E "Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd|pxlcolor.ppd" | head -n 1 | awk '{print $1}')
+            out_driver_opt="-m ${pxl_col:-drv:///sample.drv/laserjet.ppd}"
+            out_model_desc="Generic PCL 6 Color"
+            ;;
+        3)
+            local pxl_mono
+            pxl_mono=$(lpinfo -m 2>/dev/null | grep -E "Generic-PCL_6_PCL_XL_Printer-pxlmono.ppd|pxlmono.ppd" | head -n 1 | awk '{print $1}')
+            out_driver_opt="-m ${pxl_mono:-drv:///sample.drv/laserjet.ppd}"
+            out_model_desc="Generic PCL 6 Monochrome"
+            ;;
+        4)
+            out_driver_opt="-m raw"
+            out_model_desc="Raw Passthrough Queue"
+            ;;
+        5)
+            out_driver_opt="-m everywhere"
+            out_model_desc="IPP Everywhere / Driverless"
+            ;;
+        6)
+            out_driver_opt="-m drv:///sample.drv/generic.ppd"
+            out_model_desc="Generic PostScript Printer"
+            ;;
+        7)
+            local search_kw
+            prompt_with_default "Nhập từ khóa tìm kiếm Model (VD: 3370, C3570, LaserJet, Canon)" "Apeos" search_kw
+            local search_results=()
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && search_results+=("$line")
+            done < <(lpinfo -m 2>/dev/null | grep -i "$search_kw" | head -n 20)
+
+            if [[ ${#search_results[@]} -gt 0 ]]; then
+                echo -e "\n${C_BOLD}Kết quả tìm kiếm driver:${C_RESET}"
+                for idx in "${!search_results[@]}"; do
+                    printf "  %2d) %s\n" "$((idx + 1))" "${search_results[$idx]}"
+                done
+                local s_sel
+                prompt_with_default "Chọn driver [1-${#search_results[@]}]" "1" s_sel
+                if [[ "$s_sel" =~ ^[0-9]+$ ]] && [[ "$s_sel" -ge 1 ]] && [[ "$s_sel" -le "${#search_results[@]}" ]]; then
+                    local chosen_line="${search_results[$((s_sel - 1))]}"
+                    local chosen_ppd="${chosen_line%% *}"
+                    out_driver_opt="-m ${chosen_ppd}"
+                    out_model_desc="${chosen_line#* }"
+                else
+                    out_driver_opt="-m drv:///sample.drv/laserjet.ppd"
+                    out_model_desc="Generic PCL Laser"
+                fi
+            else
+                msg_warn "Không tìm thấy kết quả phù hợp. Dùng Generic PCL 6."
+                out_driver_opt="-m drv:///sample.drv/laserjet.ppd"
+                out_model_desc="Generic PCL 6"
+            fi
+            ;;
+        8)
+            local ppd_file
+            prompt_with_default "Nhập đường dẫn đầy đủ tới file .ppd" "" ppd_file
+            if [[ -f "$ppd_file" ]]; then
+                out_driver_opt="-P $ppd_file"
+                out_model_desc="Custom PPD: $(basename "$ppd_file")"
+            else
+                msg_warn "File không tồn tại. Dùng Generic PCL 6."
+                out_driver_opt="-m drv:///sample.drv/laserjet.ppd"
+                out_model_desc="Generic PCL 6"
+            fi
+            ;;
+        *)
+            out_driver_opt="-m drv:///sample.drv/laserjet.ppd"
+            out_model_desc="Generic PCL 6"
+            ;;
+    esac
+
+    msg_ok "Đã chọn Driver: ${out_model_desc} (${out_driver_opt})"
+}
+
 add_network_printer_ip() {
     check_root
     msg_step "THÊM MÁY IN MẠNG TRỰC TIẾP QUA ĐỊA CHỈ IP (SOCKET / JETDIRECT / IPP)"
@@ -112,31 +292,10 @@ add_network_printer_ip() {
         *) device_uri="socket://${printer_ip}:9100" ;;
     esac
 
-    echo ""
-    echo -e "${C_BOLD}Chọn kiểu Driver (Trình điều khiển):${C_RESET}"
-    echo "  1) IPP Everywhere / Driverless (Chuẩn hiện đại cho máy in mạng đời mới)"
-    echo "  2) Generic PostScript Printer (Tương thích cao)"
-    echo "  3) Generic PCL 6 / PCL XL Printer (Tương thích hầu hết máy in văn phòng)"
-    echo "  4) Tự chỉ định file PPD (.ppd file)"
-    local driver_choice
-    prompt_with_default "Lựa chọn driver [1-4]" "1" driver_choice
-
+    # Driver & Model Selection
     local driver_opt=""
-    case "$driver_choice" in
-        1) driver_opt="-m everywhere" ;;
-        2) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
-        3) driver_opt="-m foomatic-db-compressed-ppds:0/ppd/foomatic-ppd/Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd" ;;
-        4)
-            local ppd_path
-            prompt_with_default "Nhập đường dẫn đầy đủ tới file .ppd" "" ppd_path
-            if [[ -f "$ppd_path" ]]; then
-                driver_opt="-P $ppd_path"
-            else
-                msg_warn "Không tìm thấy file PPD. Tự động chuyển về Generic PostScript."
-                driver_opt="-m drv:///sample.drv/generic.ppd"
-            fi
-            ;;
-    esac
+    local model_desc=""
+    select_printer_driver driver_opt model_desc
 
     msg_info "Đang cài đặt máy in: ${printer_name} -> ${device_uri}..."
     
@@ -424,45 +583,10 @@ add_windows_shared_printer() {
         return 1
     fi
 
-    # Driver Selection
-    echo ""
-    echo -e "${C_BOLD}Chọn Driver (Trình điều khiển) cho máy in:${C_RESET}"
-    echo "  1) Generic PCL 6 / PCL XL (KHUYÊN DÙNG NHẤT - Chuẩn 95% máy in văn phòng HP, Canon, Ricoh...)"
-    echo "  2) Generic PCL Laser Printer (Chuẩn PCL Laser tích hợp sẵn của CUPS)"
-    echo "  3) Raw Queue (Không lọc - Gửi lệnh in thô để Windows Print Server tự xử lý)"
-    echo "  4) Generic PostScript Printer (CHỈ CHỌN nếu máy in có chip Adobe PostScript, nếu không sẽ in giấy trắng liên tục!)"
-    echo "  5) Tự chỉ định file .ppd riêng"
-    local driver_choice
-    prompt_with_default "Lựa chọn driver [1-5]" "1" driver_choice
-
+    # Driver & Model Selection
     local driver_opt=""
-    case "$driver_choice" in
-        1)
-            local pxl_ppd=""
-            pxl_ppd=$(lpinfo -m 2>/dev/null | grep -E "Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd|pxlcolor.ppd|pxlmono.ppd" | head -n 1 | awk '{print $1}')
-            if [[ -n "$pxl_ppd" ]]; then
-                driver_opt="-m $pxl_ppd"
-            elif lpinfo -m 2>/dev/null | grep -q "laserjet.ppd"; then
-                driver_opt="-m drv:///sample.drv/laserjet.ppd"
-            else
-                driver_opt="-m drv:///sample.drv/laserjet.ppd"
-            fi
-            ;;
-        2) driver_opt="-m drv:///sample.drv/laserjet.ppd" ;;
-        3) driver_opt="-m raw" ;;
-        4) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
-        5)
-            local ppd_path
-            prompt_with_default "Nhập đường dẫn đầy đủ tới file .ppd" "" ppd_path
-            if [[ -f "$ppd_path" ]]; then
-                driver_opt="-P $ppd_path"
-            else
-                msg_warn "Không tìm thấy file PPD. Tự động dùng PCL Laser Printer."
-                driver_opt="-m drv:///sample.drv/laserjet.ppd"
-            fi
-            ;;
-        *) driver_opt="-m drv:///sample.drv/laserjet.ppd" ;;
-    esac
+    local model_desc=""
+    select_printer_driver driver_opt model_desc
 
     msg_info "Đang cài đặt máy in SMB: ${local_printer_name} -> ${print_server}/${share_printer_name}..."
 
@@ -496,7 +620,7 @@ add_windows_shared_printer() {
         msg_ok "THÊM MÁY IN TỪ WINDOWS PRINT SERVER THÀNH CÔNG!"
         msg_ok "Tên máy in : ${local_printer_name}"
         msg_ok "Server     : \\\\${print_server}\\${share_printer_name}"
-        msg_ok "Driver     : ${driver_opt}"
+        msg_ok "Model/Driver: ${model_desc} (${driver_opt})"
         msg_ok "========================================================="
 
         if prompt_confirm "Bạn có muốn đặt máy in này làm MẶC ĐỊNH?" "Y"; then
@@ -573,43 +697,10 @@ change_printer_driver() {
         return 1
     fi
 
-    echo ""
-    echo -e "${C_BOLD}Chọn Driver mới để khắc phục lỗi:${C_RESET}"
-    echo "  1) Generic PCL 6 / PCL XL (KHUYÊN DÙNG NHẤT - Khắc phục lỗi in giấy trắng liên tục)"
-    echo "  2) Generic PCL Laser Printer (Chuẩn PCL Laser cơ bản tích hợp sẵn của CUPS)"
-    echo "  3) Raw Queue (Không lọc - Gửi lệnh in thô để Windows Print Server tự xử lý)"
-    echo "  4) Generic PostScript Printer (Chỉ dành cho máy in có chip Adobe PostScript phần cứng)"
-    echo "  5) Chỉ định file .ppd riêng"
-
-    local d_choice
-    prompt_with_default "Lựa chọn Driver [1-5]" "1" d_choice
-
+    # Driver & Model Selection
     local driver_opt=""
-    case "$d_choice" in
-        1)
-            local pxl_ppd=""
-            pxl_ppd=$(lpinfo -m 2>/dev/null | grep -E "Generic-PCL_6_PCL_XL_Printer-pxlcolor.ppd|pxlcolor.ppd|pxlmono.ppd" | head -n 1 | awk '{print $1}')
-            if [[ -n "$pxl_ppd" ]]; then
-                driver_opt="-m $pxl_ppd"
-            else
-                driver_opt="-m drv:///sample.drv/laserjet.ppd"
-            fi
-            ;;
-        2) driver_opt="-m drv:///sample.drv/laserjet.ppd" ;;
-        3) driver_opt="-m raw" ;;
-        4) driver_opt="-m drv:///sample.drv/generic.ppd" ;;
-        5)
-            local ppd_path
-            prompt_with_default "Nhập đường dẫn đầy đủ tới file .ppd" "" ppd_path
-            if [[ -f "$ppd_path" ]]; then
-                driver_opt="-P $ppd_path"
-            else
-                msg_warn "Không tìm thấy file PPD. Dùng PCL Laser Printer."
-                driver_opt="-m drv:///sample.drv/laserjet.ppd"
-            fi
-            ;;
-        *) driver_opt="-m drv:///sample.drv/laserjet.ppd" ;;
-    esac
+    local model_desc=""
+    select_printer_driver driver_opt model_desc
 
     msg_info "Đang cập nhật Driver cho máy in ${target_printer}..."
     # shellcheck disable=SC2086
@@ -617,7 +708,7 @@ change_printer_driver() {
         cupsenable "$target_printer" 2>/dev/null || true
         cupsaccept "$target_printer" 2>/dev/null || true
         msg_ok "Đã cập nhật Driver cho máy in [${target_printer}] thành công!"
-        msg_ok "Driver mới: ${driver_opt}"
+        msg_ok "Model / Driver: ${model_desc} (${driver_opt})"
 
         if prompt_confirm "Bạn có muốn in thử 1 trang kiểm tra ngay bây giờ?" "Y"; then
             print_test_page "$target_printer"
