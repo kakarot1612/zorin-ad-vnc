@@ -1,16 +1,17 @@
 [Unit]
-Description=x11vnc remote desktop
-After=display-manager.service network-online.target
-Wants=network-online.target
+Description=Zorin OS Dynamic X11VNC Session Daemon
+Documentation=https://github.com/vnit/zorin-ad-vnc
+After=network.target gdm.service sssd.service
+Wants=gdm.service
 
 [Service]
 Type=simple
-Environment="DISPLAY=:0"
-Environment="DISPALY=:0"
-ExecStart=/usr/bin/x11vnc -display ${DISPALY} -auth ${XAUTHORITY} -rfbauth /etc/x11vnc/passwd -forever -shared -noxdamage -rfbport 5900
-Restart=on-failure
-RestartSec=10
+ExecStart=/usr/local/bin/zorin-x11vnc-daemon.sh
+Restart=always
+RestartSec=5
+KillMode=process
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=graphical.target
-Alias=x11vnc.service
+WantedBy=multi-user.target
