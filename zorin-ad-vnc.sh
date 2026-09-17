@@ -5,7 +5,8 @@
 # Description: Main CLI & TUI Management tool for Zorin OS AD Join & X11VNC.
 # ==============================================================================
 
-set -e
+# In interactive TUI menu, do not let individual command exit codes crash the menu
+set +e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$SCRIPT_DIR/lib"

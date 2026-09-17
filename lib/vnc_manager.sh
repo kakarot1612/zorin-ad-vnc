@@ -126,20 +126,35 @@ install_vnc_systemd_service() {
     # 4. Ensure Xauthority file exists and has correct permissions
     touch "${target_home}/.Xauthority" 2>/dev/null || true
 
-    # Copy active Xorg auth cookie from live session if present
-    if [[ -f "/run/user/${target_uid}/gdm/Xauthority" ]]; then
-        cp -f "/run/user/${target_uid}/gdm/Xauthority" "${target_home}/.Xauthority" 2>/dev/null || true
+    # Find active Xorg auth cookie from live session
+    local auth_found=""
+    local xorg_auth
+    xorg_auth=$(ps -eo args 2>/dev/null | grep -E '[X]org' | grep -o -E -- '-auth[ =][^ ]+' | awk '{print $2}' | head -n 1)
+    if [[ -n "$xorg_auth" && -f "$xorg_auth" ]]; then
+        auth_found="$xorg_auth"
     fi
-    local local_xorg_auth
-    local_xorg_auth=$(ps -eo args 2>/dev/null | grep -E '[X]org' | grep -o -E -- '-auth[ =][^ ]+' | awk '{print $2}' | head -n 1)
-    if [[ -n "$local_xorg_auth" && -f "$local_xorg_auth" ]]; then
-        cp -f "$local_xorg_auth" "${target_home}/.Xauthority" 2>/dev/null || true
-    fi
-    for xf in /run/user/"${target_uid}"/xauth*; do
-        if [[ -f "$xf" ]]; then
-            xauth -f "${target_home}/.Xauthority" merge "$xf" 2>/dev/null || true
+
+    if [[ -z "$auth_found" ]]; then
+        local env_auth
+        env_auth=$(grep -s -z -h '^XAUTHORITY=' /proc/[0-9]*/environ 2>/dev/null | tr '\0' '\n' | grep '^XAUTHORITY=' | head -n 1 | cut -d= -f2-)
+        if [[ -n "$env_auth" && -f "$env_auth" ]]; then
+            auth_found="$env_auth"
         fi
-    done
+    fi
+
+    if [[ -z "$auth_found" ]]; then
+        for f in "/run/user/${target_uid}/gdm/Xauthority" "/run/user/${target_uid}/.Xauthority" /run/user/"${target_uid}"/xauth* /var/lib/gdm3/.Xauthority; do
+            if [[ -f "$f" ]]; then
+                auth_found="$f"
+                break
+            fi
+        done
+    fi
+
+    if [[ -n "$auth_found" && -f "$auth_found" ]]; then
+        cp -f "$auth_found" "${target_home}/.Xauthority" 2>/dev/null || true
+        msg_ok "Đã đồng bộ cookie Xorg: ${auth_found} -> ${target_home}/.Xauthority"
+    fi
     chown "${target_user}:${target_user}" "${target_home}/.Xauthority" 2>/dev/null || true
     chmod 600 "${target_home}/.Xauthority" 2>/dev/null || true
 
@@ -203,64 +218,99 @@ EOF
     systemctl disable zorin-x11vnc-daemon.service 2>/dev/null || true
     rm -f /etc/systemd/system/zorin-x11vnc-daemon.service 2>/dev/null || true
 
-    su - "$target_user" -c "DISPLAY=:0 xhost +local:" 2>/dev/null || true
+    su - "$target_user" -c "DISPLAY=:0 XAUTHORITY='${target_home}/.Xauthority' xhost +local:" 2>/dev/null || true
+    xhost +local: >/dev/null 2>&1 || true
     msg_ok "Đã kích hoạt hook tự động chạy VNC cho mọi User (Local & Domain AD):"
     msg_info " - Hook 1: /etc/X11/Xsession.d/99zorin-vnc-xauth"
     msg_info " - Hook 2: /etc/xdg/autostart/zorin-vnc-xhost.desktop"
 
-    msg_info "Bạn có thể kiểm tra trạng thái bằng: systemctl status x11vnc"
-
-    return 0
+    # 8. TỰ ĐỘNG KIỂM THỬ DỊCH VỤ & CỔNG MẠNG NGAY SAU KHI CÀI ĐẶT
+    verify_vnc_service
+    return $?
 }
 
-show_vnc_status() {
-    msg_step "TRẠNG THÁI DỊCH VỤ X11VNC VÀ KẾT NỐI DESKTOP"
-
-    # 1. Systemd Service
-    if systemctl is-active --quiet "${SYSTEMD_SERVICE}"; then
-        msg_ok "Systemd Service [${SYSTEMD_SERVICE}]: ĐANG CHẠY [ACTIVE]"
-    else
-        msg_warn "Systemd Service [${SYSTEMD_SERVICE}]: ĐANG TẮT [INACTIVE]"
-    fi
-
-    # 2. Listening Port
+verify_vnc_service() {
+    msg_step "KIỂM THỬ DỊCH VỤ X11VNC & KIỂM TRA CỔNG KẾT NỐI (PORT TEST)"
+    
     local port="5900"
     if [[ -f "${VNC_CONFIG_DIR}/zorin-vnc.conf" ]]; then
-        port=$(grep "VNC_PORT=" "${VNC_CONFIG_DIR}/zorin-vnc.conf" | cut -d'"' -f2)
-        port="${port:-5900}"
+        # shellcheck source=/dev/null
+        source "${VNC_CONFIG_DIR}/zorin-vnc.conf" 2>/dev/null || true
+        port="${VNC_PORT:-5900}"
     fi
 
+    echo -e "${C_CYAN}Đang chờ dịch vụ x11vnc khởi động và gắn cổng ${port}...${C_RESET}"
+    sleep 2
+
+    # 1. Kiểm tra trạng thái service systemd
+    local service_state
+    service_state=$(systemctl is-active x11vnc.service 2>/dev/null || echo "unknown")
+
+    if [[ "$service_state" == "active" ]]; then
+        msg_ok "1. Trạng thái Service [x11vnc.service]: ĐANG CHẠY [ACTIVE]"
+    else
+        msg_err "1. Trạng thái Service [x11vnc.service]: THẤT BẠI [Trạng thái: ${service_state}]"
+    fi
+
+    # 2. Kiểm tra tiến trình x11vnc
+    local pids
+    pids=$(pgrep -d ' ' x11vnc 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+        local run_user
+        run_user=$(ps -o user= -p "$(echo "$pids" | awk '{print $1}')" 2>/dev/null | tr -d ' ')
+        msg_ok "2. Tiến trình x11vnc (PID: ${pids}): ĐANG CHẠY (User: ${C_CYAN}${run_user}${C_RESET})"
+    else
+        msg_err "2. Tiến trình x11vnc: KHÔNG TÌM THẤY TRONG BỘ NHỚ"
+    fi
+
+    # 3. Kiểm thử cổng mạng TCP 5900 (Port test)
     local port_listen=""
     if command -v ss >/dev/null 2>&1; then
-        port_listen=$(ss -tulpn | grep ":${port} " || true)
+        port_listen=$(ss -tulpn 2>/dev/null | grep -E ":${port}\b" || true)
     elif command -v netstat >/dev/null 2>&1; then
-        port_listen=$(netstat -tulpn 2>/dev/null | grep ":${port} " || true)
+        port_listen=$(netstat -tulpn 2>/dev/null | grep -E ":${port}\b" || true)
     fi
 
     if [[ -n "$port_listen" ]]; then
-        msg_ok "Cổng VNC (TCP ${port}): ĐANG LẮNG NGHE [LISTENING]"
-        echo -e "   ${C_DIM}${port_listen}${C_RESET}"
+        msg_ok "3. Kiểm thử cổng mạng TCP ${port}: THÀNH CÔNG! CỔNG ĐÃ MỞ [LISTENING]"
+        echo -e "   ${C_CYAN}Socket: ${port_listen}${C_RESET}"
+        local local_ip
+        local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        echo -e "\n${C_GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}"
+        echo -e "${C_BOLD}${C_GREEN}✓ THIẾT LẬP VNC HOÀN TẤT VÀ KIỂM THỬ THÀNH CÔNG!${C_RESET}"
+        echo -e "  Địa chỉ kết nối từ máy khác (VNC Viewer): ${C_BOLD}${C_WHITE}${local_ip}:${port}${C_RESET}"
+        echo -e "${C_GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}"
+        return 0
     else
-        msg_warn "Cổng VNC (TCP ${port}): CHƯA MỞ (Có thể chưa có user nào đăng nhập GUI Xorg)"
-    fi
+        msg_err "3. Kiểm thử cổng mạng TCP ${port}: THẤT BẠI! CỔNG CHƯA MỞ."
+        
+        # Chẩn đoán nguyên nhân chuyên sâu
+        echo -e "\n${C_BOLD}${C_YELLOW}=== CHẨN ĐOÁN NGUYÊN NHÂN LỖI & HƯỚNG XỬ LÝ ===${C_RESET}"
+        
+        # Kiểm tra Wayland
+        local sess_type="${XDG_SESSION_TYPE:-unknown}"
+        if [[ "$sess_type" == "wayland" ]]; then
+            echo -e "${C_RED}[!] NGUYÊN NHÂN CHÍNH: Phiên đồ họa hiện tại đang là WAYLAND!${C_RESET}"
+            echo -e "    x11vnc không thể hoạt động trên Wayland. Máy cần được reboot để chuyển sang Xorg."
+            echo -e "    👉 Hãy gõ: ${C_BOLD}sudo reboot${C_RESET}"
+        fi
 
-    # 3. Active x11vnc process and owner
-    local vnc_pids
-    vnc_pids=$(pgrep -a x11vnc || true)
-    if [[ -n "$vnc_pids" ]]; then
-        msg_ok "Tiến trình x11vnc đang chạy:"
-        echo -e "${C_CYAN}${vnc_pids}${C_RESET}"
-        local running_user
-        running_user=$(ps -o user= -p "$(pgrep x11vnc | head -n 1)" 2>/dev/null | tr -d ' ')
-        echo -e "   Chạy dưới user: ${C_GREEN}${running_user}${C_RESET} (Đảm bảo đúng desktop của user)"
-    else
-        msg_info "Hiện tại không có tiến trình x11vnc nào đang chạy (Chờ user đăng nhập)."
-    fi
+        # Kiểm tra file password
+        if [[ ! -s "$VNC_PASSWD_FILE" ]]; then
+            echo -e "${C_RED}[!] File mật khẩu VNC chưa tồn tại hoặc bị rỗng: ${VNC_PASSWD_FILE}${C_RESET}"
+            echo -e "    👉 Hãy chọn mục [8] trong menu để đặt mật khẩu VNC."
+        else
+            echo -e "${C_GREEN}[✓] File mật khẩu VNC đã có: ${VNC_PASSWD_FILE}${C_RESET}"
+        fi
 
-    # 4. Password file
-    if [[ -f "$VNC_PASSWD_FILE" ]]; then
-        msg_ok "File mật khẩu VNC: ĐÃ THIẾT LẬP (${VNC_PASSWD_FILE})"
-    else
-        msg_warn "File mật khẩu VNC: CHƯA THIẾT LẬP! Khuyên bạn nên chạy chức năng đặt mật khẩu."
+        # In 15 dòng nhật ký lỗi từ systemd journalctl
+        echo -e "\n${C_BOLD}${C_RED}=== CHI TIẾT LOG LỖI DỊCH VỤ (journalctl -u x11vnc) ===${C_RESET}"
+        journalctl -u x11vnc -n 15 --no-pager 2>/dev/null || true
+        echo -e "${C_BOLD}${C_RED}======================================================${C_RESET}\n"
+        return 1
     fi
+}
+
+show_vnc_status() {
+    verify_vnc_service
 }

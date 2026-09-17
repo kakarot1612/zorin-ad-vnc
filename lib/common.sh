@@ -198,9 +198,16 @@ prompt_confirm() {
     fi
 }
 
-# Pause until user presses Enter
+# Pause until user presses Enter (reliably reads from /dev/tty so it never auto-skips)
 press_enter_to_continue() {
-    read -r -p "$(echo -e "\n${C_DIM}Nhấn [Enter] để quay lại menu...${C_RESET}")" _
+    flush_stdin
+    echo ""
+    echo -e "${C_BOLD}${C_YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}"
+    if [[ -r /dev/tty ]]; then
+        read -r -p "$(echo -e "${C_BOLD}${C_CYAN}👉 Nhấn [Enter] để quay lại menu chính...${C_RESET}")" _ < /dev/tty
+    else
+        read -r -p "$(echo -e "${C_BOLD}${C_CYAN}👉 Nhấn [Enter] để quay lại menu chính...${C_RESET}")" _
+    fi
 }
 
 # Normalize AD username and domain whether entered as user, user@domain.com, or DOMAIN\user

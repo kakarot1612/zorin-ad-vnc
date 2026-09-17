@@ -146,12 +146,37 @@ systemctl disable zorin-x11vnc-daemon.service 2>/dev/null || true
 rm -f /etc/systemd/system/zorin-x11vnc-daemon.service 2>/dev/null || true
 
 # Apply immediately to current desktop if logged in
-su - "$TARGET_USER" -c "DISPLAY=:0 xhost +local:" 2>/dev/null || true
+su - "$TARGET_USER" -c "DISPLAY=:0 XAUTHORITY='${TARGET_HOME}/.Xauthority' xhost +local:" 2>/dev/null || true
+xhost +local: >/dev/null 2>&1 || true
 echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt hook tự động chạy VNC cho mọi User (Local & Domain AD):"
 echo -e "         - /etc/X11/Xsession.d/99zorin-vnc-xauth"
 echo -e "         - /etc/xdg/autostart/zorin-vnc-xhost.desktop"
 
-# 9. Enable NetBIOS & LLMNR (so other PCs can ping this computer by hostname)
+# 9. Kiểm thử cổng mạng TCP 5900 và trạng thái dịch vụ (Port Test)
+echo -e "\n\033[1;34m==>\033[1;37m ĐANG KIỂM THỬ DỊCH VỤ X11VNC & CỔNG 5900 (PORT TEST)...\033[0m"
+sleep 2
+vnc_state=$(systemctl is-active x11vnc.service 2>/dev/null || echo "unknown")
+if [[ "$vnc_state" == "active" ]]; then
+    echo -e "\033[0;32m[✓ OK]\033[0m Dịch vụ x11vnc.service: ĐANG CHẠY [ACTIVE]"
+else
+    echo -e "\033[0;31m[✗ LỖI]\033[0m Dịch vụ x11vnc.service: THẤT BẠI [Trạng thái: ${vnc_state}]"
+fi
+
+if ss -tulpn 2>/dev/null | grep -E ':5900\b' >/dev/null; then
+    echo -e "\033[0;32m[✓ OK]\033[0m Cổng TCP 5900: ĐÃ MỞ & ĐANG LẮNG NGHE [LISTENING]"
+    local_vnc_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    echo -e "      Kết nối thử: \033[1;32m${local_vnc_ip}:5900\033[0m"
+else
+    echo -e "\033[0;31m[✗ LỖI]\033[0m Cổng TCP 5900 CHƯA MỞ!"
+    if [[ "$XDG_SESSION_TYPE" == "wayland" ]]; then
+        echo -e "\033[0;33m[!] NGUYÊN NHÂN: Phiên đồ họa đang chạy Wayland. Máy CẦN REBOOT (sudo reboot) để chuyển sang Xorg!\033[0m"
+    fi
+    echo -e "\033[1;31m--- Chi tiết lỗi systemd (journalctl -u x11vnc) ---\033[0m"
+    journalctl -u x11vnc -n 12 --no-pager 2>/dev/null || true
+    echo -e "\033[1;31m---------------------------------------------------\033[0m"
+fi
+
+# 10. Enable NetBIOS & LLMNR (so other PCs can ping this computer by hostname)
 local_h=$(hostname -s)
 if [[ -f /etc/samba/smb.conf ]]; then
     if ! grep -q "netbios name" /etc/samba/smb.conf; then
