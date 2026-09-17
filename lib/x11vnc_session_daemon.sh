@@ -10,7 +10,7 @@
 export HOME="/root"
 DAEMON_LOG="/var/log/zorin-x11vnc.log"
 CONFIG_FILE="/etc/x11vnc/zorin-vnc.conf"
-PASSWD_FILE="/etc/x11vnc/vncpwd"
+PASSWD_FILE="/etc/x11vnc/passwd"
 
 log_daemon() {
     local level="$1"
