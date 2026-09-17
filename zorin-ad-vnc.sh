@@ -95,7 +95,21 @@ test_ad_user() {
         msg_err "Không tìm thấy user trong database NSS."
     fi
 
-    # Optional Kerberos ticket authentication test
+    # 3. Check PAM & GPO Login Rights (sssctl user-checks)
+    msg_info "3. Kiểm tra quyền đăng nhập PAM & GPO (sssctl user-checks ${user_to_test})..."
+    if command -v sssctl >/dev/null 2>&1; then
+        local user_check_out=""
+        user_check_out=$(sssctl user-checks "$user_to_test" 2>&1 || true)
+        echo "$user_check_out"
+        if echo "$user_check_out" | grep -qi "denied"; then
+            msg_err "CẢNH BÁO: User bị từ chối quyền đăng nhập (Bị chặn bởi AD GPO access control)!"
+            echo -e "   👉 Khắc phục ngay: Chọn mục [5] trong menu -> chọn [1] Bật GPO Permissive."
+        elif echo "$user_check_out" | grep -qi "Success"; then
+            msg_ok "Quyền đăng nhập PAM & GPO: HỢP LỆ (User được phép đăng nhập GUI / Console)!"
+        fi
+    fi
+
+    # 4. Optional Kerberos ticket authentication test
     if prompt_confirm "Bạn có muốn kiểm tra xác thực mật khẩu qua Kerberos (kinit)?" "Y"; then
         local user_pass
         prompt_secure_password "Nhập mật khẩu cho tài khoản AD [${user_to_test}]" user_pass false
@@ -256,7 +270,7 @@ main_menu() {
         echo -e " ${C_GREEN}[2]${C_RESET}  Kiểm tra DNS & Kết nối Domain Controller (DNS / AD Check)"
         echo -e " ${C_GREEN}[3]${C_RESET}  Cài đặt các gói phụ thuộc hệ thống (AD / SSSD / VNC / CUPS / SMB)"
         echo -e " ${C_GREEN}[4]${C_RESET}  Gia nhập Active Directory (Join AD - Nhập user/pass AD Admin)"
-        echo -e " ${C_GREEN}[5]${C_RESET}  Cấu hình xác thực SSSD & Tự tạo thư mục Home (PAM mkhomedir)"
+        echo -e " ${C_GREEN}[5]${C_RESET}  Cấu hình xác thực SSSD & Sửa lỗi đăng nhập AD (GPO Permissive & PAM Home)"
         echo -e " ${C_GREEN}[6]${C_RESET}  Cấu hình GDM3 ép sử dụng Xorg (Tắt Wayland bắt buộc cho VNC)"
         echo -e " ${C_DIM}------------------ ĐIỀU KHIỂN TỪ XA (REMOTE SUPPORT) ------------------${C_RESET}"
         echo -e " ${C_GREEN}[7]${C_RESET}  Cài đặt & Kích hoạt dịch vụ x11vnc (Remote Support cho mọi user)"
@@ -286,8 +300,19 @@ main_menu() {
             3)  install_ad_dependencies; press_enter_to_continue ;;
             4)  join_active_directory; press_enter_to_continue ;;
             5)
-                configure_sssd
-                configure_pam_mkhomedir
+                echo -e "\n${C_CYAN}--- CẤU HÌNH XÁC THỰC SSSD & SỬA LỖI ĐĂNG NHẬP ACTIVE DIRECTORY ---${C_RESET}"
+                echo "1) Bật AD GPO Permissive (Sửa lỗi AD user không đăng nhập được máy - Khuyên dùng)"
+                echo "2) Cấu hình SSSD toàn diện (Ghim Domain Controller, Tên miền & Tạo sssd.conf)"
+                echo "3) Cấu hình PAM tự động tạo thư mục Home cho User AD (pam_mkhomedir)"
+                echo "4) Thay đổi linh hoạt chế độ GPO (Permissive / Enforcing)"
+                local sssd_opt
+                prompt_with_default "Lựa chọn [1-4]" "1" sssd_opt
+                case "$sssd_opt" in
+                    1) set_gpo_permissive ;;
+                    2) configure_sssd; configure_pam_mkhomedir ;;
+                    3) configure_pam_mkhomedir ;;
+                    4) toggle_gpo_mode ;;
+                esac
                 press_enter_to_continue
                 ;;
             6)  configure_gdm_xorg; press_enter_to_continue ;;
@@ -374,6 +399,10 @@ else
         --register-dns)
             check_root
             register_ad_dns_and_netbios
+            ;;
+        --fix-gpo|--gpo-permissive)
+            check_root
+            set_gpo_permissive
             ;;
         --toggle-gpo)
             check_root

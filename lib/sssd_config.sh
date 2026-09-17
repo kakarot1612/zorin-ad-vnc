@@ -62,20 +62,20 @@ configure_sssd() {
     local ad_servers="$dc1"
     [[ -n "$dc2" ]] && ad_servers="${dc1}, ${dc2}"
 
-    # GPO Mode option
+    # GPO Mode option (Default to Permissive for Linux workstations in AD)
     echo ""
     echo -e "${C_BOLD}Chọn chế độ AD GPO Access Control:${C_RESET}"
-    echo "  1) Enforcing  (Khuyên dùng - Tuân thủ chính sách bảo mật AD GPO)"
-    echo "  2) Permissive (Troubleshooting - Bỏ qua chặn GPO nếu gặp lỗi PAM service)"
+    echo "  1) Permissive (Khuyên dùng cho Linux - Bỏ qua chặn GPO Windows ở bước pam_acct_mgmt)"
+    echo "  2) Enforcing  (Chỉ dùng nếu Windows DC đã thiết lập GPO riêng cho Linux)"
     local gpo_choice
     prompt_with_default "Lựa chọn [1-2]" "1" gpo_choice
 
-    local gpo_setting="ad_gpo_access_control = enforcing"
+    local gpo_setting="ad_gpo_access_control = permissive"
     if [[ "$gpo_choice" == "2" ]]; then
-        gpo_setting="ad_gpo_access_control = permissive"
-        msg_warn "Đang thiết lập GPO ở chế độ Permissive (Troubleshooting mode)."
+        gpo_setting="ad_gpo_access_control = enforcing"
+        msg_warn "Đang thiết lập GPO ở chế độ Enforcing (Có thể bị chặn đăng nhập GUI nếu GPO không có quyền)."
     else
-        msg_info "Đang thiết lập GPO ở chế độ Enforcing (Standard mode)."
+        msg_ok "Đang thiết lập GPO ở chế độ Permissive (Cho phép AD user đăng nhập bình thường)."
     fi
 
     # Check if domain section exists or build a clean configuration
@@ -157,9 +157,52 @@ EOF
     return 0
 }
 
+set_gpo_permissive() {
+    check_root
+    msg_step "THIẾT LẬP AD GPO ACCESS CONTROL = PERMISSIVE (SỬA LỖI ĐĂNG NHẬP AD)"
+
+    if [[ ! -f "$SSSD_CONF" ]]; then
+        msg_err "Không tìm thấy file $SSSD_CONF! Máy chưa cấu hình SSSD."
+        return 1
+    fi
+
+    backup_file "$SSSD_CONF" "sssd-gpo-permissive"
+
+    if grep -q "ad_gpo_access_control" "$SSSD_CONF"; then
+        sed -i 's/^[[:space:]]*ad_gpo_access_control[[:space:]]*=.*/ad_gpo_access_control = permissive/' "$SSSD_CONF"
+    else
+        sed -i '/\[domain\/.*\]/a ad_gpo_access_control = permissive' "$SSSD_CONF"
+    fi
+
+    chmod 600 "$SSSD_CONF"
+    chown root:root "$SSSD_CONF"
+
+    msg_info "Đang xóa SSSD cache và khởi động lại dịch vụ SSSD..."
+    if command -v sss_cache >/dev/null 2>&1; then
+        sss_cache -E 2>/dev/null || true
+    fi
+    systemctl restart sssd
+
+    if systemctl is-active --quiet sssd; then
+        msg_ok "Đã cấu hình thành công: ad_gpo_access_control = permissive"
+        msg_ok "Dịch vụ SSSD đang hoạt động [ACTIVE]."
+        
+        local check_user=""
+        prompt_with_default "Nhập tên tài khoản AD để kiểm tra quyền đăng nhập (Enter để bỏ qua)" "" check_user
+        if [[ -n "$check_user" ]] && command -v sssctl >/dev/null 2>&1; then
+            msg_info "Đang kiểm tra quyền đăng nhập: sssctl user-checks ${check_user}..."
+            sssctl user-checks "$check_user" || true
+        fi
+        return 0
+    else
+        msg_err "Dịch vụ SSSD khởi động thất bại. Kiểm tra journalctl -u sssd."
+        return 1
+    fi
+}
+
 toggle_gpo_mode() {
     check_root
-    msg_step "THAY ĐỔI CHẾ ĐỘ AD GPO ACCESS CONTROL (ENFORCING / PERMISSIVE)"
+    msg_step "THAY ĐỔI CHẾ ĐỘ AD GPO ACCESS CONTROL (PERMISSIVE / ENFORCING)"
 
     if [[ ! -f "$SSSD_CONF" ]]; then
         msg_err "Không tìm thấy file $SSSD_CONF!"
@@ -176,28 +219,33 @@ toggle_gpo_mode() {
     fi
 
     echo -e "Chế độ hiện tại: ${C_CYAN}${current_mode}${C_RESET}"
-    echo "1) Thiết lập ENFORCING"
-    echo "2) Thiết lập PERMISSIVE"
+    echo "1) Thiết lập PERMISSIVE (Khuyên dùng - Cho phép AD user đăng nhập GUI/Console)"
+    echo "2) Thiết lập ENFORCING  (Bắt buộc tuân thủ GPO Windows - có thể bị chặn pam_acct_mgmt)"
     local choice
     prompt_with_default "Chọn chế độ mới [1/2]" "1" choice
 
     if [[ "$choice" == "2" ]]; then
         if grep -q "ad_gpo_access_control" "$SSSD_CONF"; then
-            sed -i 's/ad_gpo_access_control.*/ad_gpo_access_control = permissive/' "$SSSD_CONF"
-        else
-            sed -i '/\[domain\/.*\]/a ad_gpo_access_control = permissive' "$SSSD_CONF"
-        fi
-        msg_ok "Đã chuyển GPO sang: PERMISSIVE"
-    else
-        if grep -q "ad_gpo_access_control" "$SSSD_CONF"; then
-            sed -i 's/ad_gpo_access_control.*/ad_gpo_access_control = enforcing/' "$SSSD_CONF"
+            sed -i 's/^[[:space:]]*ad_gpo_access_control.*/ad_gpo_access_control = enforcing/' "$SSSD_CONF"
         else
             sed -i '/\[domain\/.*\]/a ad_gpo_access_control = enforcing' "$SSSD_CONF"
         fi
         msg_ok "Đã chuyển GPO sang: ENFORCING"
+    else
+        if grep -q "ad_gpo_access_control" "$SSSD_CONF"; then
+            sed -i 's/^[[:space:]]*ad_gpo_access_control.*/ad_gpo_access_control = permissive/' "$SSSD_CONF"
+        else
+            sed -i '/\[domain\/.*\]/a ad_gpo_access_control = permissive' "$SSSD_CONF"
+        fi
+        msg_ok "Đã chuyển GPO sang: PERMISSIVE"
     fi
 
     chmod 600 "$SSSD_CONF"
+    chown root:root "$SSSD_CONF"
+
+    if command -v sss_cache >/dev/null 2>&1; then
+        sss_cache -E 2>/dev/null || true
+    fi
     systemctl restart sssd
     msg_ok "Dịch vụ SSSD đã được khởi động lại."
 }

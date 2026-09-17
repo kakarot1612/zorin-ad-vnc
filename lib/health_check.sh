@@ -129,6 +129,17 @@ run_health_check() {
         format_status "PAM mkhomedir" "MISSING" "warn"
     fi
 
+    # 8b. AD GPO Access Control
+    if [[ -f "/etc/sssd/sssd.conf" ]]; then
+        if grep -q "ad_gpo_access_control[[:space:]]*=[[:space:]]*permissive" /etc/sssd/sssd.conf; then
+            format_status "AD GPO Access Control" "PERMISSIVE (Logon OK)" "true"
+        elif grep -q "ad_gpo_access_control[[:space:]]*=[[:space:]]*enforcing" /etc/sssd/sssd.conf; then
+            format_status "AD GPO Access Control" "ENFORCING (Có thể chặn GUI)" "warn"
+        else
+            format_status "AD GPO Access Control" "DEFAULT (Enforcing)" "warn"
+        fi
+    fi
+
     # 9. GDM Wayland Disabled
     local gdm_conf="/etc/gdm3/custom.conf"
     [[ ! -f "$gdm_conf" ]] && gdm_conf="/etc/gdm/custom.conf"
