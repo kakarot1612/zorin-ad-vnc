@@ -139,38 +139,34 @@ install_vnc_systemd_service() {
     done
 
     # 5. Create systemd service unit matching proven working setup
-    local unit_file="/etc/systemd/system/${SYSTEMD_SERVICE}"
+    local unit_file="/etc/systemd/system/x11vnc.service"
     cat > "$unit_file" <<EOF
 [Unit]
-Description=x11vnc VNC Server for X11
-After=multi-user.target network.target gdm.service
-Wants=gdm.service
+Description=x11vnc remote desktop
+After=display-manager.service network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=${target_user}
-Group=${target_user}
 Environment="DISPLAY=:0"
 Environment="XAUTHORITY=${target_home}/.Xauthority"
-Environment="HOME=${target_home}"
-ExecStart=/usr/bin/x11vnc -display :0 -auth ${target_home}/.Xauthority -rfbauth ${VNC_PASSWD_FILE} -forever -shared -noxdamage -repeat -rfbport 5900
-Restart=always
-RestartSec=3
+ExecStart=/usr/bin/x11vnc -display :0 -auth ${target_home}/.Xauthority -rfbauth ${VNC_PASSWD_FILE} -forever -shared -noxdamage -rfbport 5900
+Restart=on-failure
+RestartSec=10
 
 [Install]
-WantedBy=multi-user.target
-Alias=x11vnc.service
+WantedBy=graphical.target
+Alias=zorin-x11vnc.service
 EOF
 
-    # 6. Create direct symlink for x11vnc.service so 'systemctl status x11vnc' works directly
-    ln -sf "$unit_file" /etc/systemd/system/x11vnc.service
+    ln -sf "$unit_file" "/etc/systemd/system/${SYSTEMD_SERVICE}"
 
     systemctl daemon-reload
-    systemctl enable "${SYSTEMD_SERVICE}" 2>/dev/null || true
     systemctl enable x11vnc.service 2>/dev/null || true
-    systemctl restart "${SYSTEMD_SERVICE}"
-    msg_ok "Đã kích hoạt và khởi động dịch vụ: ${SYSTEMD_SERVICE} (User: ${target_user})"
-    msg_info "Bạn có thể kiểm tra trạng thái bằng cả: systemctl status x11vnc hoặc systemctl status zorin-x11vnc"
+    systemctl restart x11vnc.service 2>/dev/null || true
+    msg_ok "Đã kích hoạt và khởi động dịch vụ: x11vnc.service (User: ${target_user})"
+    msg_info "Bạn có thể kiểm tra trạng thái bằng: systemctl status x11vnc"
 
     return 0
 }

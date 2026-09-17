@@ -84,33 +84,31 @@ for gdm_conf in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
 done
 
 # 7. Create & Install systemd unit matching the exact proven working setup
-cat > "$SERVICE_PATH" <<EOF
+cat > "/etc/systemd/system/x11vnc.service" <<EOF
 [Unit]
-Description=x11vnc VNC Server for X11
-After=multi-user.target network.target gdm.service
-Wants=gdm.service
+Description=x11vnc remote desktop
+After=display-manager.service network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=${TARGET_USER}
-Group=${TARGET_USER}
 Environment="DISPLAY=:0"
 Environment="XAUTHORITY=${TARGET_HOME}/.Xauthority"
-Environment="HOME=${TARGET_HOME}"
-ExecStart=/usr/bin/x11vnc -display :0 -auth ${TARGET_HOME}/.Xauthority -rfbauth /etc/x11vnc/passwd -forever -shared -noxdamage -repeat -rfbport 5900
-Restart=always
-RestartSec=3
+ExecStart=/usr/bin/x11vnc -display :0 -auth ${TARGET_HOME}/.Xauthority -rfbauth /etc/x11vnc/passwd -forever -shared -noxdamage -rfbport 5900
+Restart=on-failure
+RestartSec=10
 
 [Install]
-WantedBy=multi-user.target
-Alias=x11vnc.service
+WantedBy=graphical.target
+Alias=zorin-x11vnc.service
 EOF
 
-ln -sf "$SERVICE_PATH" /etc/systemd/system/x11vnc.service
+ln -sf /etc/systemd/system/x11vnc.service /etc/systemd/system/zorin-x11vnc.service
 systemctl daemon-reload
-systemctl enable zorin-x11vnc.service 2>/dev/null || true
-systemctl restart zorin-x11vnc.service 2>/dev/null || true
-echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: zorin-x11vnc (Alias: x11vnc.service | User: ${TARGET_USER})"
+systemctl enable x11vnc.service 2>/dev/null || true
+systemctl restart x11vnc.service 2>/dev/null || true
+echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: x11vnc.service (User: ${TARGET_USER})"
 
 # 6. Enable NetBIOS & LLMNR (so other PCs can ping this computer by hostname)
 local_h=$(hostname -s)
