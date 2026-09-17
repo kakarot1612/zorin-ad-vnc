@@ -48,9 +48,10 @@ setup_vnc_password() {
     # Store password securely with x11vnc
     local target_user="${VNC_USER:-${SUDO_USER:-$(logname 2>/dev/null || id -un 1000 2>/dev/null || whoami)}}"
     x11vnc -storepasswd "$vnc_pass" "$VNC_PASSWD_FILE" >/dev/null 2>&1
-    chmod 600 "$VNC_PASSWD_FILE"
-    chown "${target_user}:${target_user}" "$VNC_PASSWD_FILE" 2>/dev/null || true
+    chmod 755 "$VNC_CONFIG_DIR"
+    chmod 644 "$VNC_PASSWD_FILE"
     ln -sf "$VNC_PASSWD_FILE" /etc/x11vnc/vncpwd 2>/dev/null || true
+    chmod 644 /etc/x11vnc/vncpwd 2>/dev/null || true
 
     unset vnc_pass
 
@@ -199,18 +200,21 @@ fi
 EOF
     chmod 644 /etc/X11/Xsession.d/99zorin-vnc-xauth
 
-    # Hook 2: XDG Desktop Autostart (runs when any user enters GUI desktop)
+    # Hook 2: XDG Desktop Autostart (Tự động khởi chạy x11vnc cho bất kỳ user nào logon vào Desktop)
     mkdir -p /etc/xdg/autostart
-    cat > /etc/xdg/autostart/zorin-vnc-xhost.desktop <<'EOF'
+    cat > /etc/xdg/autostart/zorin-x11vnc.desktop <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Zorin VNC XHost Setup
-Exec=xhost +local:
+Name=Zorin X11VNC Remote Desktop
+Comment=Automatically launch x11vnc when user logs in
+Exec=sh -c "xhost +local: 2>/dev/null; pkill -u $USER -x x11vnc 2>/dev/null; sleep 1; x11vnc -display :0 -forever -shared -rfbport 5900 -noxdamage -repeat -rfbauth /etc/x11vnc/vncpwd"
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 EOF
-    chmod 644 /etc/xdg/autostart/zorin-vnc-xhost.desktop
+    chmod 644 /etc/xdg/autostart/zorin-x11vnc.desktop
+    chmod 755 /etc/x11vnc
+    chmod 644 /etc/x11vnc/passwd /etc/x11vnc/vncpwd 2>/dev/null || true
 
     # Clean up obsolete daemon files from previous iterations to prevent confusion
     rm -f /usr/local/bin/zorin-x11vnc-daemon.sh 2>/dev/null || true
@@ -220,9 +224,9 @@ EOF
 
     su - "$target_user" -c "DISPLAY=:0 XAUTHORITY='${target_home}/.Xauthority' xhost +local:" 2>/dev/null || true
     xhost +local: >/dev/null 2>&1 || true
-    msg_ok "Đã kích hoạt hook tự động chạy VNC cho mọi User (Local & Domain AD):"
-    msg_info " - Hook 1: /etc/X11/Xsession.d/99zorin-vnc-xauth"
-    msg_info " - Hook 2: /etc/xdg/autostart/zorin-vnc-xhost.desktop"
+    msg_ok "Đã kích hoạt tự động chạy VNC cho mọi User (Local & Domain AD khi Logon):"
+    msg_info " - Hook 1: /etc/X11/Xsession.d/99zorin-vnc-xauth (Ủy quyền Xorg)"
+    msg_info " - Hook 2: /etc/xdg/autostart/zorin-x11vnc.desktop (Chạy VNC khi bất kỳ User nào đăng nhập)"
 
     # 8. TỰ ĐỘNG KIỂM THỬ DỊCH VỤ & CỔNG MẠNG NGAY SAU KHI CÀI ĐẶT
     verify_vnc_service
