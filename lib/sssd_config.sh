@@ -97,45 +97,32 @@ configure_sssd() {
         msg_ok "Đang thiết lập GPO ở chế độ Permissive (Cho phép AD user đăng nhập bình thường)."
     fi
 
-    # Check if domain section exists or build a clean configuration
-    msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF} (AD Server: ${ad_servers})..."
+    # Check if domain section exists or build a clean configuration matching proven working setup
+    msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF} (Chuẩn hệ thống doanh nghiệp AD)..."
     
     cat > "$SSSD_CONF" <<EOF
 [sssd]
-services = nss, pam, ssh
-config_file_version = 2
 domains = ${domain}
+config_file_version = 2
+services = nss, pam
 
 [domain/${domain}]
-id_provider = ad
-access_provider = ad
-auth_provider = ad
-chpass_provider = ad
-
-# Tự động tìm kiếm Domain Controller & Global Catalog qua DNS SRV bằng FQDN (Bắt buộc cho Kerberos)
-ad_server = ${ad_servers}
-ad_domain = ${domain}
-krb5_realm = ${domain^^}
-
-# Tùy chọn Home Directory và tên người dùng ngắn
-fallback_homedir = /home/%u@%d
-use_fully_qualified_names = False
-
-# GPO Access Control
-${gpo_setting}
-
-# Dynamic DNS Update to Windows Active Directory DNS Server
 dyndns_update = True
-dyndns_server = ${dc1}
 dyndns_refresh_interval = 14400
 dyndns_update_ptr = True
 dyndns_ttl = 3600
-
-# Cache & Performance
-cache_credentials = True
-krb5_store_password_if_offline = True
+${gpo_setting}
 default_shell = /bin/bash
+krb5_store_password_if_offline = True
+cache_credentials = True
+krb5_realm = ${domain^^}
+realmd_tags = manages-system joined-with-adcli
+id_provider = ad
+fallback_homedir = /home/%u@%d
+ad_domain = ${domain}
+use_fully_qualified_names = False
 ldap_id_mapping = True
+access_provider = ad
 EOF
 
     # Set strict permissions (SSSD will fail to start if not 0600)
@@ -194,13 +181,11 @@ set_gpo_permissive() {
         sed -i '/\[domain\/.*\]/a ad_gpo_access_control = permissive' "$SSSD_CONF"
     fi
 
-    # 2. Khắc phục lỗi SSSD Offline: Thay thế IP thô trong ad_server bằng DNS SRV Auto-discovery (_srv_)
-    # Kerberos và LDAP bắt buộc dùng FQDN tên máy, dùng IP sẽ khiến Kerberos SPN thất bại và SSSD bị Offline
-    if grep -q -E "^[[:space:]]*ad_server[[:space:]]*=[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" "$SSSD_CONF"; then
-        msg_info "Phát hiện ad_server đang gán bằng IP thô (nguyên nhân khiến Kerberos SPN lỗi & SSSD Offline)."
-        msg_info "Đang chuyển sang cơ chế DNS Service Discovery FQDN (ad_server = _srv_)..."
-        sed -i 's/^[[:space:]]*ad_server[[:space:]]*=.*/ad_server = _srv_/' "$SSSD_CONF"
-    fi
+    # 2. Khắc phục lỗi SSSD Offline: Xóa bỏ hoàn toàn các dòng ad_server và dyndns_server gán IP thô
+    # Để SSSD dùng cơ chế DNS Service Discovery chuẩn Active Directory như máy mẫu
+    sed -i '/^[[:space:]]*ad_server[[:space:]]*=/d' "$SSSD_CONF"
+    sed -i '/^[[:space:]]*dyndns_server[[:space:]]*=/d' "$SSSD_CONF"
+    sed -i 's/services = nss, pam, ssh/services = nss, pam/' "$SSSD_CONF" 2>/dev/null || true
 
     chmod 600 "$SSSD_CONF"
     chown root:root "$SSSD_CONF"
