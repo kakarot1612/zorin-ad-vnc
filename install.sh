@@ -32,26 +32,46 @@ if command -v x11vnc >/dev/null 2>&1; then
     echo -e "\033[0;32m[✓ OK]\033[0m Gói x11vnc đã sẵn sàng: $(x11vnc -version 2>&1 | head -n 1)"
 fi
 
-# 3. Ensure VNC default password exists and is valid
+# 3. Detect primary desktop user and home directory
+TARGET_USER="${VNC_USER:-${SUDO_USER:-$(logname 2>/dev/null || id -un 1000 2>/dev/null || whoami)}}"
+TARGET_HOME=$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6)
+TARGET_HOME="${TARGET_HOME:-/home/$TARGET_USER}"
+TARGET_UID=$(id -u "$TARGET_USER" 2>/dev/null || echo 1000)
+
+# 4. Ensure VNC password file exists (/etc/x11vnc/passwd)
 mkdir -p /etc/x11vnc
 chmod 755 /etc/x11vnc
-if [[ ! -s /etc/x11vnc/vncpwd ]]; then
-    if command -v x11vnc >/dev/null 2>&1; then
-        x11vnc -storepasswd "123456" /etc/x11vnc/vncpwd >/dev/null 2>&1 || true
-        if [[ ! -s /etc/x11vnc/vncpwd ]]; then
-            printf "123456\n123456\n" | x11vnc -storepasswd /etc/x11vnc/vncpwd >/dev/null 2>&1 || true
+if [[ ! -s /etc/x11vnc/passwd ]]; then
+    if [[ -s /etc/x11vnc/vncpwd ]]; then
+        cp /etc/x11vnc/vncpwd /etc/x11vnc/passwd
+    elif command -v x11vnc >/dev/null 2>&1; then
+        x11vnc -storepasswd "123456" /etc/x11vnc/passwd >/dev/null 2>&1 || true
+        if [[ ! -s /etc/x11vnc/passwd ]]; then
+            printf "123456\n123456\n" | x11vnc -storepasswd /etc/x11vnc/passwd >/dev/null 2>&1 || true
         fi
-        chmod 644 /etc/x11vnc/vncpwd 2>/dev/null || true
-        echo -e "\033[0;32m[✓ OK]\033[0m Đã tạo mật khẩu VNC mặc định: /etc/x11vnc/vncpwd (123456)"
     fi
 fi
+chown -R "${TARGET_USER}:${TARGET_USER}" /etc/x11vnc 2>/dev/null || true
+chmod 600 /etc/x11vnc/passwd 2>/dev/null || true
+ln -sf /etc/x11vnc/passwd /etc/x11vnc/vncpwd 2>/dev/null || true
+echo -e "\033[0;32m[✓ OK]\033[0m File mật khẩu VNC: /etc/x11vnc/passwd (Sở hữu: ${TARGET_USER})"
 
-# 4. Install daemon script
-cp "$INSTALL_DIR/lib/x11vnc_session_daemon.sh" "$DAEMON_PATH"
-chmod +x "$DAEMON_PATH"
-echo -e "\033[0;32m[✓ OK]\033[0m Đã cài đặt daemon script vào: $DAEMON_PATH"
+# 5. Ensure Xauthority file exists and has correct permissions
+touch "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
+chown "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
+chmod 600 "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
 
-# 4.1 Ensure GDM uses Xorg instead of Wayland for x11vnc
+# Merge active Xorg cookie if available
+if [[ -f "/run/user/${TARGET_UID}/gdm/Xauthority" ]]; then
+    xauth -f "${TARGET_HOME}/.Xauthority" merge "/run/user/${TARGET_UID}/gdm/Xauthority" 2>/dev/null || true
+fi
+for xf in /run/user/"${TARGET_UID}"/xauth*; do
+    if [[ -f "$xf" ]]; then
+        xauth -f "${TARGET_HOME}/.Xauthority" merge "$xf" 2>/dev/null || true
+    fi
+done
+
+# 6. Ensure GDM uses Xorg instead of Wayland for x11vnc
 for gdm_conf in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
     if [[ -f "$gdm_conf" ]]; then
         if grep -q -E "^#?[[:space:]]*WaylandEnable=" "$gdm_conf"; then
@@ -63,13 +83,34 @@ for gdm_conf in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
     fi
 done
 
-# 5. Install systemd service & alias symlink
-cp "$INSTALL_DIR/systemd/zorin-x11vnc.service" "$SERVICE_PATH"
+# 7. Create & Install systemd unit matching the exact proven working setup
+cat > "$SERVICE_PATH" <<EOF
+[Unit]
+Description=x11vnc VNC Server for X11
+After=multi-user.target network.target gdm.service
+Wants=gdm.service
+
+[Service]
+Type=simple
+User=${TARGET_USER}
+Group=${TARGET_USER}
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=${TARGET_HOME}/.Xauthority"
+Environment="HOME=${TARGET_HOME}"
+ExecStart=/usr/bin/x11vnc -display :0 -auth ${TARGET_HOME}/.Xauthority -rfbauth /etc/x11vnc/passwd -forever -shared -noxdamage -repeat -rfbport 5900
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+Alias=x11vnc.service
+EOF
+
 ln -sf "$SERVICE_PATH" /etc/systemd/system/x11vnc.service
 systemctl daemon-reload
 systemctl enable zorin-x11vnc.service 2>/dev/null || true
 systemctl restart zorin-x11vnc.service 2>/dev/null || true
-echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: zorin-x11vnc (Alias: x11vnc.service)"
+echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: zorin-x11vnc (Alias: x11vnc.service | User: ${TARGET_USER})"
 
 # 6. Enable NetBIOS & LLMNR (so other PCs can ping this computer by hostname)
 local_h=$(hostname -s)

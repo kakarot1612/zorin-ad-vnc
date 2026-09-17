@@ -37,7 +37,7 @@ export C_BG_BLUE='\033[44m'
 export LOG_FILE="/var/log/zorin-ad-vnc.log"
 export BACKUP_DIR="/var/backups/zorin-ad-vnc"
 export VNC_CONFIG_DIR="/etc/x11vnc"
-export VNC_PASSWD_FILE="/etc/x11vnc/vncpwd"
+export VNC_PASSWD_FILE="/etc/x11vnc/passwd"
 export DAEMON_SCRIPT="/usr/local/bin/zorin-x11vnc-daemon.sh"
 export SYSTEMD_SERVICE="zorin-x11vnc.service"
 

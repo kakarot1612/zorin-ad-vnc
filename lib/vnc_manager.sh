@@ -46,9 +46,11 @@ setup_vnc_password() {
     prompt_secure_password "Nhập mật khẩu VNC mới" vnc_pass true
 
     # Store password securely with x11vnc
+    local target_user="${VNC_USER:-${SUDO_USER:-$(logname 2>/dev/null || id -un 1000 2>/dev/null || whoami)}}"
     x11vnc -storepasswd "$vnc_pass" "$VNC_PASSWD_FILE" >/dev/null 2>&1
-    chmod 644 "$VNC_PASSWD_FILE"
-    chown root:root "$VNC_PASSWD_FILE"
+    chmod 600 "$VNC_PASSWD_FILE"
+    chown "${target_user}:${target_user}" "$VNC_PASSWD_FILE" 2>/dev/null || true
+    ln -sf "$VNC_PASSWD_FILE" /etc/x11vnc/vncpwd 2>/dev/null || true
 
     unset vnc_pass
 
@@ -80,7 +82,6 @@ configure_vnc_settings() {
     cat > "$conf_file" <<EOF
 # Cấu hình Zorin X11VNC Service
 VNC_PORT="${new_port}"
-POLL_INTERVAL=3
 EOF
     chmod 644 "$conf_file"
     msg_ok "Đã cập nhật cấu hình tại: ${conf_file} (Port: ${new_port})"
@@ -88,65 +89,87 @@ EOF
 
 install_vnc_systemd_service() {
     check_root
-    msg_step "CÀI ĐẶT SYSTEMD SERVICE CHO DYNAMIC X11VNC"
+    msg_step "CÀI ĐẶT SYSTEMD SERVICE CHO X11VNC (PROVEN PRODUCTION SETUP)"
 
     # 1. Ensure x11vnc binary is installed
     if ! command -v x11vnc >/dev/null 2>&1; then
         install_x11vnc || return 1
     fi
 
-    # 2. Ensure VNC password file exists (generate default 123456 if missing)
+    # 2. Detect primary user and home
+    local target_user="${VNC_USER:-${SUDO_USER:-$(logname 2>/dev/null || id -un 1000 2>/dev/null || whoami)}}"
+    local target_home
+    target_home=$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)
+    target_home="${target_home:-/home/$target_user}"
+    local target_uid
+    target_uid=$(id -u "$target_user" 2>/dev/null || echo 1000)
+
+    # 3. Ensure VNC password file exists (/etc/x11vnc/passwd)
     mkdir -p "$VNC_CONFIG_DIR"
-    if [[ ! -f "$VNC_PASSWD_FILE" ]]; then
-        msg_info "Chưa có file mật khẩu VNC, tạo mật khẩu mặc định (123456)..."
-        x11vnc -storepasswd "123456" "$VNC_PASSWD_FILE" >/dev/null 2>&1
-        chmod 644 "$VNC_PASSWD_FILE"
-        chown root:root "$VNC_PASSWD_FILE"
-        msg_ok "Đã tạo mật khẩu VNC mặc định tại: ${VNC_PASSWD_FILE} (Mật khẩu: 123456)"
+    chmod 755 "$VNC_CONFIG_DIR"
+    if [[ ! -s "$VNC_PASSWD_FILE" ]]; then
+        if [[ -s /etc/x11vnc/vncpwd ]]; then
+            cp /etc/x11vnc/vncpwd "$VNC_PASSWD_FILE"
+        else
+            msg_info "Chưa có file mật khẩu VNC, tạo mật khẩu mặc định (123456)..."
+            x11vnc -storepasswd "123456" "$VNC_PASSWD_FILE" >/dev/null 2>&1
+            if [[ ! -s "$VNC_PASSWD_FILE" ]]; then
+                printf "123456\n123456\n" | x11vnc -storepasswd "$VNC_PASSWD_FILE" >/dev/null 2>&1 || true
+            fi
+        fi
     fi
+    chmod 600 "$VNC_PASSWD_FILE"
+    chown -R "${target_user}:${target_user}" "$VNC_CONFIG_DIR" 2>/dev/null || true
+    ln -sf "$VNC_PASSWD_FILE" /etc/x11vnc/vncpwd 2>/dev/null || true
+    msg_ok "File mật khẩu VNC: ${VNC_PASSWD_FILE} (User: ${target_user})"
 
-    # 3. Copy daemon script to /usr/local/bin
-    local src_daemon="${LIB_DIR}/x11vnc_session_daemon.sh"
-    if [[ -f "$src_daemon" ]]; then
-        cp "$src_daemon" "$DAEMON_SCRIPT"
-        chmod +x "$DAEMON_SCRIPT"
-        msg_ok "Đã cài đặt daemon script vào: ${DAEMON_SCRIPT}"
-    else
-        msg_err "Không tìm thấy file nguồn: ${src_daemon}"
-        return 1
+    # 4. Ensure Xauthority file exists and has correct permissions
+    touch "${target_home}/.Xauthority" 2>/dev/null || true
+    chown "${target_user}:${target_user}" "${target_home}/.Xauthority" 2>/dev/null || true
+    chmod 600 "${target_home}/.Xauthority" 2>/dev/null || true
+
+    # Merge active Xorg cookie if available
+    if [[ -f "/run/user/${target_uid}/gdm/Xauthority" ]]; then
+        xauth -f "${target_home}/.Xauthority" merge "/run/user/${target_uid}/gdm/Xauthority" 2>/dev/null || true
     fi
+    for xf in /run/user/"${target_uid}"/xauth*; do
+        if [[ -f "$xf" ]]; then
+            xauth -f "${target_home}/.Xauthority" merge "$xf" 2>/dev/null || true
+        fi
+    done
 
-    # 4. Create systemd service unit with Alias=x11vnc.service
+    # 5. Create systemd service unit matching proven working setup
     local unit_file="/etc/systemd/system/${SYSTEMD_SERVICE}"
     cat > "$unit_file" <<EOF
 [Unit]
-Description=Zorin OS Dynamic X11VNC Session Daemon
-Documentation=https://github.com/kakarot1612/zorin-ad-vnc
-After=network.target gdm.service sssd.service
+Description=x11vnc VNC Server for X11
+After=multi-user.target network.target gdm.service
 Wants=gdm.service
 
 [Service]
 Type=simple
-ExecStart=${DAEMON_SCRIPT}
+User=${target_user}
+Group=${target_user}
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=${target_home}/.Xauthority"
+Environment="HOME=${target_home}"
+ExecStart=/usr/bin/x11vnc -display :0 -auth ${target_home}/.Xauthority -rfbauth ${VNC_PASSWD_FILE} -forever -shared -noxdamage -repeat -rfbport 5900
 Restart=always
-RestartSec=5
-KillMode=process
-StandardOutput=journal
-StandardError=journal
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 Alias=x11vnc.service
 EOF
 
-    # 5. Create direct symlink for x11vnc.service so 'systemctl status x11vnc' works directly
+    # 6. Create direct symlink for x11vnc.service so 'systemctl status x11vnc' works directly
     ln -sf "$unit_file" /etc/systemd/system/x11vnc.service
 
     systemctl daemon-reload
     systemctl enable "${SYSTEMD_SERVICE}" 2>/dev/null || true
     systemctl enable x11vnc.service 2>/dev/null || true
     systemctl restart "${SYSTEMD_SERVICE}"
-    msg_ok "Đã kích hoạt và khởi động dịch vụ: ${SYSTEMD_SERVICE} (Alias: x11vnc.service)"
+    msg_ok "Đã kích hoạt và khởi động dịch vụ: ${SYSTEMD_SERVICE} (User: ${target_user})"
     msg_info "Bạn có thể kiểm tra trạng thái bằng cả: systemctl status x11vnc hoặc systemctl status zorin-x11vnc"
 
     return 0
