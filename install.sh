@@ -58,18 +58,22 @@ echo -e "\033[0;32m[✓ OK]\033[0m File mật khẩu VNC: /etc/x11vnc/passwd (S�
 
 # 5. Ensure Xauthority file exists and has correct permissions
 touch "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
-chown "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
-chmod 600 "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
 
-# Merge active Xorg cookie if available
+# Copy active Xorg auth cookie from live session if present
 if [[ -f "/run/user/${TARGET_UID}/gdm/Xauthority" ]]; then
-    xauth -f "${TARGET_HOME}/.Xauthority" merge "/run/user/${TARGET_UID}/gdm/Xauthority" 2>/dev/null || true
+    cp -f "/run/user/${TARGET_UID}/gdm/Xauthority" "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
+fi
+local_xorg_auth=$(ps -eo args 2>/dev/null | grep -E '[X]org' | grep -o -E -- '-auth[ =][^ ]+' | awk '{print $2}' | head -n 1)
+if [[ -n "$local_xorg_auth" && -f "$local_xorg_auth" ]]; then
+    cp -f "$local_xorg_auth" "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
 fi
 for xf in /run/user/"${TARGET_UID}"/xauth*; do
     if [[ -f "$xf" ]]; then
         xauth -f "${TARGET_HOME}/.Xauthority" merge "$xf" 2>/dev/null || true
     fi
 done
+chown "${TARGET_USER}:${TARGET_USER}" "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
+chmod 600 "${TARGET_HOME}/.Xauthority" 2>/dev/null || true
 
 # 6. Ensure GDM uses Xorg instead of Wayland for x11vnc
 for gdm_conf in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do

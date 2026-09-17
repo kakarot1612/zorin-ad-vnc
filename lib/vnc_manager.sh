@@ -125,18 +125,23 @@ install_vnc_systemd_service() {
 
     # 4. Ensure Xauthority file exists and has correct permissions
     touch "${target_home}/.Xauthority" 2>/dev/null || true
-    chown "${target_user}:${target_user}" "${target_home}/.Xauthority" 2>/dev/null || true
-    chmod 600 "${target_home}/.Xauthority" 2>/dev/null || true
 
-    # Merge active Xorg cookie if available
+    # Copy active Xorg auth cookie from live session if present
     if [[ -f "/run/user/${target_uid}/gdm/Xauthority" ]]; then
-        xauth -f "${target_home}/.Xauthority" merge "/run/user/${target_uid}/gdm/Xauthority" 2>/dev/null || true
+        cp -f "/run/user/${target_uid}/gdm/Xauthority" "${target_home}/.Xauthority" 2>/dev/null || true
+    fi
+    local local_xorg_auth
+    local_xorg_auth=$(ps -eo args 2>/dev/null | grep -E '[X]org' | grep -o -E -- '-auth[ =][^ ]+' | awk '{print $2}' | head -n 1)
+    if [[ -n "$local_xorg_auth" && -f "$local_xorg_auth" ]]; then
+        cp -f "$local_xorg_auth" "${target_home}/.Xauthority" 2>/dev/null || true
     fi
     for xf in /run/user/"${target_uid}"/xauth*; do
         if [[ -f "$xf" ]]; then
             xauth -f "${target_home}/.Xauthority" merge "$xf" 2>/dev/null || true
         fi
     done
+    chown "${target_user}:${target_user}" "${target_home}/.Xauthority" 2>/dev/null || true
+    chmod 600 "${target_home}/.Xauthority" 2>/dev/null || true
 
     # 5. Create systemd service unit matching proven working setup
     local unit_file="/etc/systemd/system/x11vnc.service"
