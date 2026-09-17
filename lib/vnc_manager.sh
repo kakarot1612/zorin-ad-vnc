@@ -150,8 +150,9 @@ Wants=network-online.target
 Type=simple
 User=${target_user}
 Environment="DISPLAY=:0"
+Environment="DISPALY=:0"
 Environment="XAUTHORITY=${target_home}/.Xauthority"
-ExecStart=/usr/bin/x11vnc -display :0 -auth ${target_home}/.Xauthority -rfbauth ${VNC_PASSWD_FILE} -forever -shared -noxdamage -rfbport 5900
+ExecStart=/usr/bin/x11vnc -display \${DISPALY} -auth \${XAUTHORITY} -rfbauth ${VNC_PASSWD_FILE} -forever -shared -noxdamage -rfbport 5900
 Restart=on-failure
 RestartSec=10
 
