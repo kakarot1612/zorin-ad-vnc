@@ -62,14 +62,29 @@ find_xauthority() {
     local user="$2"
     local auth=""
 
-    # 1. Standard GDM Xauthority location
+    # 1. Inspect user processes in /proc to get exact XAUTHORITY from active session
+    if [[ -n "$uid" ]]; then
+        local user_pids
+        user_pids=$(pgrep -u "$uid" 2>/dev/null | head -n 30)
+        for p in $user_pids; do
+            if [[ -r "/proc/$p/environ" ]]; then
+                auth=$(grep -s -z '^XAUTHORITY=' "/proc/$p/environ" 2>/dev/null | tr -d '\0' | cut -d= -f2-)
+                if [[ -n "$auth" && -f "$auth" ]]; then
+                    echo "$auth"
+                    return 0
+                fi
+            fi
+        done
+    fi
+
+    # 2. Standard GDM Xauthority location
     if [[ -f "/run/user/${uid}/gdm/Xauthority" ]]; then
         auth="/run/user/${uid}/gdm/Xauthority"
     elif [[ -f "/run/user/${uid}/.Xauthority" ]]; then
         auth="/run/user/${uid}/.Xauthority"
     fi
 
-    # 2. Extract from Xorg process arguments if not found yet
+    # 3. Extract from Xorg process arguments if not found yet
     if [[ -z "$auth" ]]; then
         local xorg_cmd
         xorg_cmd=$(pgrep -a Xorg 2>/dev/null || true)
@@ -80,7 +95,7 @@ find_xauthority() {
         fi
     fi
 
-    # 3. Check user home directory
+    # 4. Check user home directory
     if [[ -z "$auth" ]]; then
         local user_home
         user_home=$(getent passwd "$user" | cut -d: -f6)
@@ -94,22 +109,40 @@ find_xauthority() {
 
 find_display() {
     local sid="$1"
-    local disp
+    local uid="$2"
+    local disp=""
+
+    # 1. Inspect user processes in /proc to get exact DISPLAY from active session
+    if [[ -n "$uid" ]]; then
+        local user_pids
+        user_pids=$(pgrep -u "$uid" 2>/dev/null | head -n 30)
+        for p in $user_pids; do
+            if [[ -r "/proc/$p/environ" ]]; then
+                disp=$(grep -s -z '^DISPLAY=' "/proc/$p/environ" 2>/dev/null | tr -d '\0' | cut -d= -f2-)
+                if [[ -n "$disp" ]]; then
+                    echo "$disp"
+                    return 0
+                fi
+            fi
+        done
+    fi
+
+    # 2. Check loginctl session property
     disp=$(loginctl show-session "$sid" -p Display --value 2>/dev/null)
     if [[ -n "$disp" ]]; then
         echo "$disp"
         return 0
     fi
 
-    # Check Xorg processes
-    local xorg_disp
-    xorg_disp=$(pgrep -a Xorg 2>/dev/null | grep -o -E ':[0-9]+' | head -n 1)
-    if [[ -n "$xorg_disp" ]]; then
-        echo "$xorg_disp"
+    # 3. Check active sockets in /tmp/.X11-unix (newest socket)
+    local latest_sock
+    latest_sock=$(ls -t /tmp/.X11-unix/X* 2>/dev/null | head -n 1)
+    if [[ -n "$latest_sock" ]]; then
+        echo ":${latest_sock##*/X}"
         return 0
     fi
 
-    echo ":0"
+    echo ":1"
 }
 
 start_daemon_loop() {
@@ -158,7 +191,7 @@ start_daemon_loop() {
                 fi
 
                 local disp
-                disp=$(find_display "$sid")
+                disp=$(find_display "$sid" "$uid")
                 local auth
                 auth=$(find_xauthority "$uid" "$user")
 
@@ -182,6 +215,7 @@ start_daemon_loop() {
                     "-rfbport" "$VNC_PORT"
                     "-noxdamage"
                     "-repeat"
+                    "-noshm"
                 )
 
                 if [[ -f "$PASSWD_FILE" ]]; then
@@ -191,16 +225,28 @@ start_daemon_loop() {
                     log_daemon "WARN" "VNC password file $PASSWD_FILE not found! Running without password is not recommended."
                 fi
 
-                log_daemon "INFO" "Launching x11vnc as user $user on display $disp..."
+                log_daemon "INFO" "Launching x11vnc on display $disp for user $user..."
 
-                # Execute x11vnc as the target user (NOT as admin / root)
+                # Execute x11vnc as the target user with -noshm
                 sudo -u "$user" env \
                     DISPLAY="$disp" \
                     XAUTHORITY="$auth" \
                     x11vnc "${cmd_args[@]}" >> "$DAEMON_LOG" 2>&1 &
                 vnc_pid=$!
 
-                log_daemon "SUCCESS" "x11vnc started with PID: $vnc_pid for user: $user"
+                sleep 1
+                if ! kill -0 "$vnc_pid" 2>/dev/null; then
+                    log_daemon "WARN" "Launch as user $user exited, retrying directly as root with -noshm..."
+                    env DISPLAY="$disp" XAUTHORITY="$auth" \
+                        x11vnc "${cmd_args[@]}" >> "$DAEMON_LOG" 2>&1 &
+                    vnc_pid=$!
+                fi
+
+                if kill -0 "$vnc_pid" 2>/dev/null; then
+                    log_daemon "SUCCESS" "x11vnc started with PID: $vnc_pid for user: $user on port $VNC_PORT"
+                else
+                    log_daemon "ERR" "Failed to start x11vnc for user $user on display $disp."
+                fi
             fi
         else
             # No active user session (e.g. at GDM login screen or locked/logged out)
