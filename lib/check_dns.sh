@@ -74,6 +74,31 @@ run_dns_ad_check() {
         all_ok=false
     fi
 
+    # 2.1 Check for stale Host (A) record on AD DNS
+    local cur_host
+    cur_host=$(hostname -s)
+    local dns_lookup_ip=""
+    if command -v host >/dev/null 2>&1; then
+        dns_lookup_ip=$(host "${cur_host}.${domain}" "$dc1" 2>/dev/null | awk '/has address/ {print $NF}' | head -n 1)
+    elif command -v nslookup >/dev/null 2>&1; then
+        dns_lookup_ip=$(nslookup "${cur_host}.${domain}" "$dc1" 2>/dev/null | awk '/Address: / {print $2}' | tail -n 1)
+    fi
+    local my_cur_ip=""
+    my_cur_ip=$(ip route get "$dc1" 2>/dev/null | awk '{print $7}' | head -n 1)
+
+    if [[ -n "$dns_lookup_ip" ]]; then
+        if [[ "$dns_lookup_ip" != "$my_cur_ip" ]]; then
+            msg_warn "PHÁT HIỆN BẢN GHI DNS CŨ CỦA MÁY [${cur_host^^}] TRÊN MÁY CHỦ DNS (${dc1})!"
+            echo -e "   - DNS đang trỏ: ${C_RED}${dns_lookup_ip}${C_RESET} (IP máy cũ)"
+            echo -e "   - IP thực tế của máy Zorin hiện tại: ${C_GREEN}${my_cur_ip}${C_RESET}"
+            echo -e "   ${C_YELLOW}-> KHUYẾN NGHỊ: Hãy mở 'DNS Manager' (dnsmgmt.msc) trên Windows Server -> Forward Lookup Zones -> Xóa bản ghi Host (A) [${cur_host^^}] cũ để tránh ping nhầm và tránh lỗi phân quyền khi cập nhật DNS.${C_RESET}"
+        else
+            msg_ok "Bản ghi DNS của máy [${cur_host^^}] trên DNS trùng khớp IP hiện tại: ${my_cur_ip}"
+        fi
+    else
+        msg_info "Chưa có bản ghi DNS cho [${cur_host^^}] trên Domain Controller (Sẽ được tự động tạo khi Join AD)."
+    fi
+
     # 3. Check DC Reachability (Ping & Ports)
     for dc_ip in "$dc1" "$dc2"; do
         [[ -z "$dc_ip" ]] && continue
