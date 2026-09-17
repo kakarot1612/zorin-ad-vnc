@@ -110,6 +110,18 @@ systemctl enable x11vnc.service 2>/dev/null || true
 systemctl restart x11vnc.service 2>/dev/null || true
 echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: x11vnc.service (User: ${TARGET_USER})"
 
+# 8. Multi-user VNC hook: Allow x11vnc to capture screen for ANY user (Local or AD)
+mkdir -p /etc/X11/Xsession.d
+cat > /etc/X11/Xsession.d/99zorin-vnc-xauth <<'EOF'
+# Grant local display access so x11vnc service can remote into any user's session
+if [ -n "$DISPLAY" ]; then
+    xhost +local: >/dev/null 2>&1 || true
+fi
+EOF
+chmod 644 /etc/X11/Xsession.d/99zorin-vnc-xauth
+su - "$TARGET_USER" -c "DISPLAY=:0 xhost +local:" 2>/dev/null || true
+echo -e "\033[0;32m[✓ OK]\033[0m Đã cài đặt hook đa người dùng: /etc/X11/Xsession.d/99zorin-vnc-xauth"
+
 # 6. Enable NetBIOS & LLMNR (so other PCs can ping this computer by hostname)
 local_h=$(hostname -s)
 if [[ -f /etc/samba/smb.conf ]]; then

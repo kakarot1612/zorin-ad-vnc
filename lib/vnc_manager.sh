@@ -166,6 +166,19 @@ EOF
     systemctl enable x11vnc.service 2>/dev/null || true
     systemctl restart x11vnc.service 2>/dev/null || true
     msg_ok "Đã kích hoạt và khởi động dịch vụ: x11vnc.service (User: ${target_user})"
+
+    # 7. Multi-user VNC hook: Allow x11vnc to capture screen for ANY user (Local or AD)
+    mkdir -p /etc/X11/Xsession.d
+    cat > /etc/X11/Xsession.d/99zorin-vnc-xauth <<'EOF'
+# Grant local display access so x11vnc service can remote into any user's session
+if [ -n "$DISPLAY" ]; then
+    xhost +local: >/dev/null 2>&1 || true
+fi
+EOF
+    chmod 644 /etc/X11/Xsession.d/99zorin-vnc-xauth
+    su - "$target_user" -c "DISPLAY=:0 xhost +local:" 2>/dev/null || true
+    msg_ok "Đã cài đặt hook đa người dùng: /etc/X11/Xsession.d/99zorin-vnc-xauth"
+
     msg_info "Bạn có thể kiểm tra trạng thái bằng: systemctl status x11vnc"
 
     return 0
