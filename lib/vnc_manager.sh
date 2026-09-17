@@ -168,7 +168,8 @@ EOF
     systemctl restart x11vnc.service 2>/dev/null || true
     msg_ok "Đã kích hoạt và khởi động dịch vụ: x11vnc.service (User: ${target_user})"
 
-    # 7. Multi-user VNC hook: Allow x11vnc to capture screen for ANY user (Local or AD)
+    # 7. Multi-user VNC hooks: Allow x11vnc to capture screen for ANY user (Local or AD)
+    # Hook 1: Xsession.d (runs for all Xorg sessions upon login)
     mkdir -p /etc/X11/Xsession.d
     cat > /etc/X11/Xsession.d/99zorin-vnc-xauth <<'EOF'
 # Grant local display access so x11vnc service can remote into any user's session
@@ -177,8 +178,30 @@ if [ -n "$DISPLAY" ]; then
 fi
 EOF
     chmod 644 /etc/X11/Xsession.d/99zorin-vnc-xauth
+
+    # Hook 2: XDG Desktop Autostart (runs when any user enters GUI desktop)
+    mkdir -p /etc/xdg/autostart
+    cat > /etc/xdg/autostart/zorin-vnc-xhost.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Zorin VNC XHost Setup
+Exec=xhost +local:
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOF
+    chmod 644 /etc/xdg/autostart/zorin-vnc-xhost.desktop
+
+    # Clean up obsolete daemon files from previous iterations to prevent confusion
+    rm -f /usr/local/bin/zorin-x11vnc-daemon.sh 2>/dev/null || true
+    systemctl stop zorin-x11vnc-daemon.service 2>/dev/null || true
+    systemctl disable zorin-x11vnc-daemon.service 2>/dev/null || true
+    rm -f /etc/systemd/system/zorin-x11vnc-daemon.service 2>/dev/null || true
+
     su - "$target_user" -c "DISPLAY=:0 xhost +local:" 2>/dev/null || true
-    msg_ok "Đã cài đặt hook đa người dùng: /etc/X11/Xsession.d/99zorin-vnc-xauth"
+    msg_ok "Đã kích hoạt hook tự động chạy VNC cho mọi User (Local & Domain AD):"
+    msg_info " - Hook 1: /etc/X11/Xsession.d/99zorin-vnc-xauth"
+    msg_info " - Hook 2: /etc/xdg/autostart/zorin-vnc-xhost.desktop"
 
     msg_info "Bạn có thể kiểm tra trạng thái bằng: systemctl status x11vnc"
 

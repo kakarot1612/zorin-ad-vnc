@@ -111,7 +111,8 @@ systemctl enable x11vnc.service 2>/dev/null || true
 systemctl restart x11vnc.service 2>/dev/null || true
 echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: x11vnc.service (User: ${TARGET_USER})"
 
-# 8. Multi-user VNC hook: Allow x11vnc to capture screen for ANY user (Local or AD)
+# 8. Multi-user VNC hooks: Allow x11vnc to capture screen for ANY user (Local or AD)
+# Hook 1: Xsession.d (runs for all Xorg sessions upon login)
 mkdir -p /etc/X11/Xsession.d
 cat > /etc/X11/Xsession.d/99zorin-vnc-xauth <<'EOF'
 # Grant local display access so x11vnc service can remote into any user's session
@@ -120,10 +121,33 @@ if [ -n "$DISPLAY" ]; then
 fi
 EOF
 chmod 644 /etc/X11/Xsession.d/99zorin-vnc-xauth
-su - "$TARGET_USER" -c "DISPLAY=:0 xhost +local:" 2>/dev/null || true
-echo -e "\033[0;32m[✓ OK]\033[0m Đã cài đặt hook đa người dùng: /etc/X11/Xsession.d/99zorin-vnc-xauth"
 
-# 6. Enable NetBIOS & LLMNR (so other PCs can ping this computer by hostname)
+# Hook 2: XDG Desktop Autostart (runs when any user enters GUI desktop)
+mkdir -p /etc/xdg/autostart
+cat > /etc/xdg/autostart/zorin-vnc-xhost.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Zorin VNC XHost Setup
+Exec=xhost +local:
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+EOF
+chmod 644 /etc/xdg/autostart/zorin-vnc-xhost.desktop
+
+# Clean up obsolete daemon files from previous iterations to prevent confusion
+rm -f /usr/local/bin/zorin-x11vnc-daemon.sh 2>/dev/null || true
+systemctl stop zorin-x11vnc-daemon.service 2>/dev/null || true
+systemctl disable zorin-x11vnc-daemon.service 2>/dev/null || true
+rm -f /etc/systemd/system/zorin-x11vnc-daemon.service 2>/dev/null || true
+
+# Apply immediately to current desktop if logged in
+su - "$TARGET_USER" -c "DISPLAY=:0 xhost +local:" 2>/dev/null || true
+echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt hook tự động chạy VNC cho mọi User (Local & Domain AD):"
+echo -e "         - /etc/X11/Xsession.d/99zorin-vnc-xauth"
+echo -e "         - /etc/xdg/autostart/zorin-vnc-xhost.desktop"
+
+# 9. Enable NetBIOS & LLMNR (so other PCs can ping this computer by hostname)
 local_h=$(hostname -s)
 if [[ -f /etc/samba/smb.conf ]]; then
     if ! grep -q "netbios name" /etc/samba/smb.conf; then
