@@ -7,10 +7,9 @@
 #              Xorg desktop session.
 # ==============================================================================
 
-export HOME="/root"
 DAEMON_LOG="/var/log/zorin-x11vnc.log"
 CONFIG_FILE="/etc/x11vnc/zorin-vnc.conf"
-PASSWD_FILE="/etc/x11vnc/passwd"
+PASSWD_FILE="/etc/x11vnc/vncpwd"
 
 log_daemon() {
     local level="$1"
@@ -29,7 +28,7 @@ if [[ -f "$CONFIG_FILE" ]]; then
 fi
 
 find_active_gui_session() {
-    # Find session on seat0 that is active
+    # Find session on seat0 that is active and not GDM login screen
     if ! command -v loginctl >/dev/null 2>&1; then
         return 1
     fi
@@ -37,8 +36,6 @@ find_active_gui_session() {
     local sessions
     sessions=$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}')
     
-    local greeter_session=""
-
     for sid in $sessions; do
         local seat user uid state stype
         seat=$(loginctl show-session "$sid" -p Seat --value 2>/dev/null)
@@ -47,24 +44,15 @@ find_active_gui_session() {
         state=$(loginctl show-session "$sid" -p State --value 2>/dev/null)
         stype=$(loginctl show-session "$sid" -p Type --value 2>/dev/null)
 
-        if [[ "$seat" == "seat0" ]] && [[ "$state" == "active" ]]; then
+        # Ignore non-seat0 or inactive sessions or the login greeter (gdm / Debian-gdm)
+        if [[ "$seat" == "seat0" ]] && [[ "$state" == "active" ]] && [[ "$user" != "gdm" ]] && [[ "$user" != "Debian-gdm" ]]; then
+            # Verify it is an X11 or graphical session
             if [[ "$stype" == "x11" ]] || [[ "$stype" == "wayland" ]]; then
-                if [[ "$user" != "gdm" ]] && [[ "$user" != "Debian-gdm" ]]; then
-                    # Prioritize logged-in user session
-                    echo "$sid $user $uid $stype"
-                    return 0
-                else
-                    greeter_session="$sid $user $uid $stype"
-                fi
+                echo "$sid $user $uid $stype"
+                return 0
             fi
         fi
     done
-
-    # Fallback to GDM greeter (login screen) if no regular user is logged in
-    if [[ -n "$greeter_session" ]]; then
-        echo "$greeter_session"
-        return 0
-    fi
 
     return 1
 }
@@ -74,92 +62,48 @@ find_xauthority() {
     local user="$2"
     local auth=""
 
-    # 1. Inspect /proc/*/environ of active GUI sessions (direct ground truth)
-    local proc_auth
-    proc_auth=$(grep -s -z -h '^XAUTHORITY=' /proc/[0-9]*/environ 2>/dev/null | tr '\0' '\n' | grep '^XAUTHORITY=' | head -n 1 | cut -d= -f2-)
-    if [[ -n "$proc_auth" && -f "$proc_auth" ]]; then
-        echo "$proc_auth"
-        return 0
+    # 1. Standard GDM Xauthority location
+    if [[ -f "/run/user/${uid}/gdm/Xauthority" ]]; then
+        auth="/run/user/${uid}/gdm/Xauthority"
+    elif [[ -f "/run/user/${uid}/.Xauthority" ]]; then
+        auth="/run/user/${uid}/.Xauthority"
     fi
 
-    # 2. Extract directly from active Xorg process arguments
-    local extracted
-    extracted=$(ps -eo args 2>/dev/null | grep -E '[X]org' | grep -o -E -- '-auth[ =][^ ]+' | awk '{print $2}' | head -n 1)
-    if [[ -n "$extracted" && -f "$extracted" ]]; then
-        echo "$extracted"
-        return 0
-    fi
-
-    # 3. Check user runtime directory
-    if [[ -n "$uid" ]]; then
-        for f in "/run/user/${uid}/gdm/Xauthority" "/run/user/${uid}/.Xauthority"; do
-            if [[ -f "$f" ]]; then
-                echo "$f"
-                return 0
-            fi
-        done
-        for f in /run/user/"${uid}"/xauth*; do
-            if [[ -f "$f" ]]; then
-                echo "$f"
-                return 0
-            fi
-        done
-    fi
-
-    # 4. Check GDM greeter / system locations
-    for f in /var/lib/gdm3/.Xauthority /run/gdm3/*/database /var/run/gdm3/*/database /run/user/*/gdm/Xauthority; do
-        if [[ -f "$f" ]]; then
-            echo "$f"
-            return 0
+    # 2. Extract from Xorg process arguments if not found yet
+    if [[ -z "$auth" ]]; then
+        local xorg_cmd
+        xorg_cmd=$(pgrep -a Xorg 2>/dev/null || true)
+        local extracted
+        extracted=$(echo "$xorg_cmd" | grep -o -E '\-auth [^ ]+' | awk '{print $2}' | head -n 1)
+        if [[ -n "$extracted" ]] && [[ -f "$extracted" ]]; then
+            auth="$extracted"
         fi
-    done
+    fi
 
-    # 5. Check user home directory
-    if [[ -n "$user" ]]; then
+    # 3. Check user home directory
+    if [[ -z "$auth" ]]; then
         local user_home
         user_home=$(getent passwd "$user" | cut -d: -f6)
-        if [[ -n "$user_home" && -f "${user_home}/.Xauthority" ]]; then
-            echo "${user_home}/.Xauthority"
-            return 0
+        if [[ -f "${user_home}/.Xauthority" ]]; then
+            auth="${user_home}/.Xauthority"
         fi
     fi
 
-    echo ""
+    echo "$auth"
 }
 
 find_display() {
     local sid="$1"
-    local disp=""
-
-    # 1. From active GUI process environment
-    local proc_disp
-    proc_disp=$(grep -s -z -h '^DISPLAY=:' /proc/[0-9]*/environ 2>/dev/null | tr '\0' '\n' | grep '^DISPLAY=:' | head -n 1 | cut -d= -f2-)
-    if [[ -n "$proc_disp" ]]; then
-        echo "$proc_disp"
-        return 0
-    fi
-
-    # 2. From loginctl
-    if [[ -n "$sid" ]]; then
-        disp=$(loginctl show-session "$sid" -p Display --value 2>/dev/null)
-    fi
+    local disp
+    disp=$(loginctl show-session "$sid" -p Display --value 2>/dev/null)
     if [[ -n "$disp" ]]; then
         echo "$disp"
         return 0
     fi
 
-    # 3. Check /tmp/.X11-unix active sockets
-    local socket
-    socket=$(ls /tmp/.X11-unix/X* 2>/dev/null | head -n 1)
-    if [[ -n "$socket" ]]; then
-        local num="${socket##*/X}"
-        echo ":${num}"
-        return 0
-    fi
-
-    # 4. Check Xorg processes
+    # Check Xorg processes
     local xorg_disp
-    xorg_disp=$(ps -eo args 2>/dev/null | grep -E '[X]org' | grep -o -E ':[0-9]+' | head -n 1)
+    xorg_disp=$(pgrep -a Xorg 2>/dev/null | grep -o -E ':[0-9]+' | head -n 1)
     if [[ -n "$xorg_disp" ]]; then
         echo "$xorg_disp"
         return 0
@@ -187,13 +131,6 @@ start_daemon_loop() {
 
     trap cleanup SIGTERM SIGINT SIGHUP
 
-    # Ensure config directory and password file have proper permissions
-    mkdir -p "$(dirname "$PASSWD_FILE")"
-    chmod 755 "$(dirname "$PASSWD_FILE")" 2>/dev/null || true
-    if [[ -f "$PASSWD_FILE" ]]; then
-        chmod 644 "$PASSWD_FILE" 2>/dev/null || true
-    fi
-
     while true; do
         local session_info
         session_info=$(find_active_gui_session || true)
@@ -201,11 +138,11 @@ start_daemon_loop() {
         if [[ -n "$session_info" ]]; then
             read -r sid user uid stype <<< "$session_info"
 
-            # If this is a new session or previously had no session or x11vnc died
+            # If this is a new session or previously had no session
             if [[ "$sid" != "$current_session_id" ]] || [[ -z "$vnc_pid" ]] || ! kill -0 "$vnc_pid" 2>/dev/null; then
                 # If there was an old x11vnc running, stop it first
                 if [[ -n "$vnc_pid" ]] && kill -0 "$vnc_pid" 2>/dev/null; then
-                    log_daemon "INFO" "Session changed (from $current_session_id to $sid). Stopping old x11vnc (PID: $vnc_pid)..."
+                    log_daemon "INFO" "Previous session $current_session_id ended. Stopping x11vnc (PID: $vnc_pid)..."
                     kill "$vnc_pid" 2>/dev/null || true
                     wait "$vnc_pid" 2>/dev/null || true
                     vnc_pid=""
@@ -215,7 +152,7 @@ start_daemon_loop() {
                 current_user="$user"
 
                 if [[ "$stype" == "wayland" ]]; then
-                    log_daemon "WARN" "Session $sid ($user) is running Wayland. x11vnc requires Xorg! Skipping."
+                    log_daemon "WARN" "User $user is running Wayland session. x11vnc requires Xorg! Skipping."
                     sleep "$POLL_INTERVAL"
                     continue
                 fi
@@ -225,11 +162,21 @@ start_daemon_loop() {
                 local auth
                 auth=$(find_xauthority "$uid" "$user")
 
-                log_daemon "INFO" "Active GUI session detected: User=${user}, UID=${uid}, Display=${disp}, Auth=${auth:-[guess]}"
+                if [[ -z "$auth" ]]; then
+                    log_daemon "WARN" "Waiting for Xauthority file for user $user (UID $uid)..."
+                    sleep 2
+                    continue
+                fi
+
+                log_daemon "INFO" "Active GUI session detected: User=${user}, UID=${uid}, Display=${disp}, Auth=${auth}"
+
+                # Ensure Xauthority is readable
+                chmod 644 "$auth" 2>/dev/null || true
 
                 # Build x11vnc command
                 local cmd_args=(
                     "-display" "$disp"
+                    "-auth" "$auth"
                     "-forever"
                     "-shared"
                     "-rfbport" "$VNC_PORT"
@@ -237,59 +184,28 @@ start_daemon_loop() {
                     "-repeat"
                 )
 
-                if [[ -s "$PASSWD_FILE" ]]; then
+                if [[ -f "$PASSWD_FILE" ]]; then
+                    chmod 644 "$PASSWD_FILE" 2>/dev/null || true
                     cmd_args+=("-rfbauth" "$PASSWD_FILE")
                 else
-                    cmd_args+=("-passwd" "123456")
+                    log_daemon "WARN" "VNC password file $PASSWD_FILE not found! Running without password is not recommended."
                 fi
 
-                if [[ -n "$auth" && -f "$auth" ]]; then
-                    chmod 644 "$auth" 2>/dev/null || true
-                    cmd_args+=("-auth" "$auth")
-                else
-                    cmd_args+=("-auth" "guess")
-                fi
+                log_daemon "INFO" "Launching x11vnc as user $user on display $disp..."
 
-                log_daemon "INFO" "Launching x11vnc on display $disp for session: $user (UID: $uid)..."
-
-                # Execute x11vnc as root with full privileges (never set bad /root/.Xauthority)
-                if [[ -n "$auth" && -f "$auth" ]]; then
-                    env DISPLAY="$disp" XAUTHORITY="$auth" \
-                        x11vnc "${cmd_args[@]}" >> "$DAEMON_LOG" 2>&1 &
-                else
-                    env DISPLAY="$disp" \
-                        x11vnc "${cmd_args[@]}" >> "$DAEMON_LOG" 2>&1 &
-                fi
+                # Execute x11vnc as the target user (NOT as admin / root)
+                sudo -u "$user" env \
+                    DISPLAY="$disp" \
+                    XAUTHORITY="$auth" \
+                    x11vnc "${cmd_args[@]}" >> "$DAEMON_LOG" 2>&1 &
                 vnc_pid=$!
 
-                # Check if x11vnc survived initial startup
-                sleep 1
-                if ! kill -0 "$vnc_pid" 2>/dev/null; then
-                    log_daemon "WARN" "x11vnc failed to start, retrying with raw -auth guess on display $disp..."
-                    local fb_args=(
-                        "-display" "$disp"
-                        "-auth" "guess"
-                        "-forever"
-                        "-shared"
-                        "-rfbport" "$VNC_PORT"
-                        "-noxdamage"
-                        "-repeat"
-                        "-passwd" "123456"
-                    )
-                    env DISPLAY="$disp" x11vnc "${fb_args[@]}" >> "$DAEMON_LOG" 2>&1 &
-                    vnc_pid=$!
-                fi
-
-                if kill -0 "$vnc_pid" 2>/dev/null; then
-                    log_daemon "SUCCESS" "x11vnc started with PID: $vnc_pid on port $VNC_PORT"
-                else
-                    log_daemon "ERROR" "x11vnc could not bind to display $disp. Check log for details."
-                fi
+                log_daemon "SUCCESS" "x11vnc started with PID: $vnc_pid for user: $user"
             fi
         else
-            # No active session found
+            # No active user session (e.g. at GDM login screen or locked/logged out)
             if [[ -n "$vnc_pid" ]] && kill -0 "$vnc_pid" 2>/dev/null; then
-                log_daemon "INFO" "No active session detected. Stopping x11vnc (PID: $vnc_pid)..."
+                log_daemon "INFO" "User logged out or session deactivated. Stopping x11vnc (PID: $vnc_pid)..."
                 kill "$vnc_pid" 2>/dev/null || true
                 wait "$vnc_pid" 2>/dev/null || true
                 vnc_pid=""

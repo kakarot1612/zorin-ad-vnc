@@ -159,35 +159,44 @@ install_vnc_systemd_service() {
     chown "${target_user}:${target_user}" "${target_home}/.Xauthority" 2>/dev/null || true
     chmod 600 "${target_home}/.Xauthority" 2>/dev/null || true
 
-    # 5. Create systemd service unit matching proven working setup
-    local unit_file="/etc/systemd/system/x11vnc.service"
+    # 5. Cài đặt script Daemon động vào /usr/local/bin/zorin-x11vnc-daemon.sh
+    if [[ -f "${LIB_DIR}/x11vnc_session_daemon.sh" ]]; then
+        cp -f "${LIB_DIR}/x11vnc_session_daemon.sh" "/usr/local/bin/zorin-x11vnc-daemon.sh"
+    fi
+    chmod 755 "/usr/local/bin/zorin-x11vnc-daemon.sh"
+    msg_ok "Đã cài đặt Daemon phát hiện phiên đăng nhập: /usr/local/bin/zorin-x11vnc-daemon.sh"
+
+    # 6. Tạo systemd service cho Zorin OS Dynamic X11VNC Session Daemon (chuẩn máy mẫu)
+    local unit_file="/etc/systemd/system/zorin-x11vnc.service"
     cat > "$unit_file" <<EOF
 [Unit]
-Description=x11vnc remote desktop
-After=display-manager.service network-online.target
-Wants=network-online.target
+Description=Zorin OS Dynamic X11VNC Session Daemon
+Documentation=https://github.com/vnit/zorin-ad-vnc
+After=network.target gdm.service sssd.service
+Wants=gdm.service
 
 [Service]
 Type=simple
-User=${target_user}
-Environment="DISPLAY=:0"
-Environment="DISPALY=:0"
-Environment="XAUTHORITY=${target_home}/.Xauthority"
-ExecStart=/usr/bin/x11vnc -display \${DISPALY} -auth \${XAUTHORITY} -rfbauth ${VNC_PASSWD_FILE} -forever -shared -noxdamage -noshm -rfbport 5900
-Restart=on-failure
-RestartSec=10
+ExecStart=/usr/local/bin/zorin-x11vnc-daemon.sh
+Restart=always
+RestartSec=5
+KillMode=process
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=graphical.target
-Alias=zorin-x11vnc.service
+WantedBy=multi-user.target
 EOF
 
-    ln -sf "$unit_file" "/etc/systemd/system/${SYSTEMD_SERVICE}"
+    # Dừng service x11vnc tĩnh cũ để tránh xung đột cổng 5900
+    systemctl stop x11vnc.service 2>/dev/null || true
+    systemctl disable x11vnc.service 2>/dev/null || true
+    rm -f /etc/systemd/system/x11vnc.service 2>/dev/null || true
 
     systemctl daemon-reload
-    systemctl enable x11vnc.service 2>/dev/null || true
-    systemctl restart x11vnc.service 2>/dev/null || true
-    msg_ok "Đã kích hoạt và khởi động dịch vụ: x11vnc.service (User: ${target_user})"
+    systemctl enable zorin-x11vnc.service 2>/dev/null || true
+    systemctl restart zorin-x11vnc.service 2>/dev/null || true
+    msg_ok "Đã kích hoạt và khởi động dịch vụ: zorin-x11vnc.service"
 
     # 7. Multi-user VNC hooks: Allow x11vnc to capture screen for ANY user (Local or AD)
     # Hook 1: Xsession.d (runs for all Xorg sessions upon login)
@@ -200,33 +209,14 @@ fi
 EOF
     chmod 644 /etc/X11/Xsession.d/99zorin-vnc-xauth
 
-    # Hook 2: XDG Desktop Autostart (Tự động khởi chạy x11vnc cho bất kỳ user nào logon vào Desktop)
-    mkdir -p /etc/xdg/autostart
-    cat > /etc/xdg/autostart/zorin-x11vnc.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Zorin X11VNC Remote Desktop
-Comment=Automatically launch x11vnc when user logs in
-Exec=sh -c "xhost +local: 2>/dev/null; pkill -u $USER -x x11vnc 2>/dev/null; sleep 1; x11vnc -display :0 -forever -shared -rfbport 5900 -noxdamage -repeat -rfbauth /etc/x11vnc/vncpwd"
-Hidden=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true
-EOF
-    chmod 644 /etc/xdg/autostart/zorin-x11vnc.desktop
     chmod 755 /etc/x11vnc
     chmod 644 /etc/x11vnc/passwd /etc/x11vnc/vncpwd 2>/dev/null || true
-
-    # Clean up obsolete daemon files from previous iterations to prevent confusion
-    rm -f /usr/local/bin/zorin-x11vnc-daemon.sh 2>/dev/null || true
-    systemctl stop zorin-x11vnc-daemon.service 2>/dev/null || true
-    systemctl disable zorin-x11vnc-daemon.service 2>/dev/null || true
-    rm -f /etc/systemd/system/zorin-x11vnc-daemon.service 2>/dev/null || true
 
     su - "$target_user" -c "DISPLAY=:0 XAUTHORITY='${target_home}/.Xauthority' xhost +local:" 2>/dev/null || true
     xhost +local: >/dev/null 2>&1 || true
     msg_ok "Đã kích hoạt tự động chạy VNC cho mọi User (Local & Domain AD khi Logon):"
-    msg_info " - Hook 1: /etc/X11/Xsession.d/99zorin-vnc-xauth (Ủy quyền Xorg)"
-    msg_info " - Hook 2: /etc/xdg/autostart/zorin-x11vnc.desktop (Chạy VNC khi bất kỳ User nào đăng nhập)"
+    msg_info " - Daemon Service: /etc/systemd/system/zorin-x11vnc.service"
+    msg_info " - Hook Xorg: /etc/X11/Xsession.d/99zorin-vnc-xauth"
 
     # 8. TỰ ĐỘNG KIỂM THỬ DỊCH VỤ & CỔNG MẠNG NGAY SAU KHI CÀI ĐẶT
     verify_vnc_service
@@ -248,12 +238,12 @@ verify_vnc_service() {
 
     # 1. Kiểm tra trạng thái service systemd
     local service_state
-    service_state=$(systemctl is-active x11vnc.service 2>/dev/null || echo "unknown")
+    service_state=$(systemctl is-active zorin-x11vnc.service 2>/dev/null || systemctl is-active x11vnc.service 2>/dev/null || echo "unknown")
 
     if [[ "$service_state" == "active" ]]; then
-        msg_ok "1. Trạng thái Service [x11vnc.service]: ĐANG CHẠY [ACTIVE]"
+        msg_ok "1. Trạng thái Service [zorin-x11vnc.service]: ĐANG CHẠY [ACTIVE]"
     else
-        msg_err "1. Trạng thái Service [x11vnc.service]: THẤT BẠI [Trạng thái: ${service_state}]"
+        msg_err "1. Trạng thái Service [zorin-x11vnc.service]: THẤT BẠI [Trạng thái: ${service_state}]"
     fi
 
     # 2. Kiểm tra tiến trình x11vnc

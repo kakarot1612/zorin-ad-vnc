@@ -87,33 +87,44 @@ for gdm_conf in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
     fi
 done
 
-# 7. Create & Install systemd unit matching the exact proven working setup
-cat > "/etc/systemd/system/x11vnc.service" <<EOF
+# 7. Cài đặt script Daemon động vào /usr/local/bin/zorin-x11vnc-daemon.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/x11vnc_session_daemon.sh" ]]; then
+    cp -f "${SCRIPT_DIR}/lib/x11vnc_session_daemon.sh" "/usr/local/bin/zorin-x11vnc-daemon.sh"
+fi
+chmod 755 "/usr/local/bin/zorin-x11vnc-daemon.sh"
+echo -e "\033[0;32m[✓ OK]\033[0m Đã cài đặt Daemon phát hiện phiên đăng nhập: /usr/local/bin/zorin-x11vnc-daemon.sh"
+
+# Tạo systemd service cho Zorin OS Dynamic X11VNC Session Daemon (chuẩn máy mẫu)
+cat > "/etc/systemd/system/zorin-x11vnc.service" <<EOF
 [Unit]
-Description=x11vnc remote desktop
-After=display-manager.service network-online.target
-Wants=network-online.target
+Description=Zorin OS Dynamic X11VNC Session Daemon
+Documentation=https://github.com/vnit/zorin-ad-vnc
+After=network.target gdm.service sssd.service
+Wants=gdm.service
 
 [Service]
 Type=simple
-User=${TARGET_USER}
-Environment="DISPLAY=:0"
-Environment="DISPALY=:0"
-Environment="XAUTHORITY=${TARGET_HOME}/.Xauthority"
-ExecStart=/usr/bin/x11vnc -display \${DISPALY} -auth \${XAUTHORITY} -rfbauth /etc/x11vnc/passwd -forever -shared -noxdamage -rfbport 5900
-Restart=on-failure
-RestartSec=10
+ExecStart=/usr/local/bin/zorin-x11vnc-daemon.sh
+Restart=always
+RestartSec=5
+KillMode=process
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=graphical.target
-Alias=zorin-x11vnc.service
+WantedBy=multi-user.target
 EOF
 
-ln -sf /etc/systemd/system/x11vnc.service /etc/systemd/system/zorin-x11vnc.service
+# Dừng service x11vnc tĩnh cũ để tránh xung đột cổng 5900
+systemctl stop x11vnc.service 2>/dev/null || true
+systemctl disable x11vnc.service 2>/dev/null || true
+rm -f /etc/systemd/system/x11vnc.service 2>/dev/null || true
+
 systemctl daemon-reload
-systemctl enable x11vnc.service 2>/dev/null || true
-systemctl restart x11vnc.service 2>/dev/null || true
-echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: x11vnc.service (User: ${TARGET_USER})"
+systemctl enable zorin-x11vnc.service 2>/dev/null || true
+systemctl restart zorin-x11vnc.service 2>/dev/null || true
+echo -e "\033[0;32m[✓ OK]\033[0m Đã kích hoạt dịch vụ: zorin-x11vnc.service"
 
 # 8. Multi-user VNC hooks: Allow x11vnc to capture screen for ANY user (Local or AD)
 # Hook 1: Xsession.d (runs for all Xorg sessions upon login)
@@ -125,25 +136,8 @@ if [ -n "$DISPLAY" ]; then
 fi
 EOF
 chmod 644 /etc/X11/Xsession.d/99zorin-vnc-xauth
-
-# Hook 2: XDG Desktop Autostart (runs when any user enters GUI desktop)
-mkdir -p /etc/xdg/autostart
-cat > /etc/xdg/autostart/zorin-vnc-xhost.desktop <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Zorin VNC XHost Setup
-Exec=xhost +local:
-Hidden=false
-NoDisplay=true
-X-GNOME-Autostart-enabled=true
-EOF
-chmod 644 /etc/xdg/autostart/zorin-vnc-xhost.desktop
-
-# Clean up obsolete daemon files from previous iterations to prevent confusion
-rm -f /usr/local/bin/zorin-x11vnc-daemon.sh 2>/dev/null || true
-systemctl stop zorin-x11vnc-daemon.service 2>/dev/null || true
-systemctl disable zorin-x11vnc-daemon.service 2>/dev/null || true
-rm -f /etc/systemd/system/zorin-x11vnc-daemon.service 2>/dev/null || true
+chmod 755 /etc/x11vnc
+chmod 644 /etc/x11vnc/passwd /etc/x11vnc/vncpwd 2>/dev/null || true
 
 # Apply immediately to current desktop if logged in
 su - "$TARGET_USER" -c "DISPLAY=:0 XAUTHORITY='${TARGET_HOME}/.Xauthority' xhost +local:" 2>/dev/null || true
@@ -155,11 +149,11 @@ echo -e "         - /etc/xdg/autostart/zorin-vnc-xhost.desktop"
 # 9. Kiểm thử cổng mạng TCP 5900 và trạng thái dịch vụ (Port Test)
 echo -e "\n\033[1;34m==>\033[1;37m ĐANG KIỂM THỬ DỊCH VỤ X11VNC & CỔNG 5900 (PORT TEST)...\033[0m"
 sleep 2
-vnc_state=$(systemctl is-active x11vnc.service 2>/dev/null || echo "unknown")
+vnc_state=$(systemctl is-active zorin-x11vnc.service 2>/dev/null || echo "unknown")
 if [[ "$vnc_state" == "active" ]]; then
-    echo -e "\033[0;32m[✓ OK]\033[0m Dịch vụ x11vnc.service: ĐANG CHẠY [ACTIVE]"
+    echo -e "\033[0;32m[✓ OK]\033[0m Dịch vụ zorin-x11vnc.service: ĐANG CHẠY [ACTIVE]"
 else
-    echo -e "\033[0;31m[✗ LỖI]\033[0m Dịch vụ x11vnc.service: THẤT BẠI [Trạng thái: ${vnc_state}]"
+    echo -e "\033[0;31m[✗ LỖI]\033[0m Dịch vụ zorin-x11vnc.service: THẤT BẠI [Trạng thái: ${vnc_state}]"
 fi
 
 if ss -tulpn 2>/dev/null | grep -E ':5900\b' >/dev/null; then
