@@ -200,20 +200,11 @@ EOF
     cat > /etc/krb5.conf <<EOF
 [libdefaults]
     default_realm = ${domain^^}
-    dns_lookup_realm = false
-    dns_lookup_kdc = false
-    rdns = false
+    dns_lookup_realm = true
+    dns_lookup_kdc = true
     ticket_lifetime = 24h
     renew_lifetime = 7d
     forwardable = true
-
-[realms]
-    ${domain^^} = {
-        kdc = ${dc_fqdn}
-$([[ -n "$dc2" ]] && echo "        kdc = ${dc2}")
-        admin_server = ${dc_fqdn}
-        default_domain = ${domain,,}
-    }
 
 [domain_realm]
     .${domain,,} = ${domain^^}

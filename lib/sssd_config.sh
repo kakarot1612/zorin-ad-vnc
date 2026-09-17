@@ -97,15 +97,8 @@ configure_sssd() {
         msg_ok "Đang thiết lập GPO ở chế độ Permissive (Cho phép AD user đăng nhập bình thường)."
     fi
 
-    local preferred_dc=""
-    prompt_with_default "Tên FQDN Domain Controller ưu tiên (ví dụ: GL-RODC1.${domain} - Enter để tự động)" "${dc1_fqdn}" preferred_dc
-    local ad_server_line=""
-    if [[ -n "$preferred_dc" ]]; then
-        ad_server_line="ad_server = ${preferred_dc}"
-    fi
-
     # Check if domain section exists or build a clean configuration matching proven working setup
-    msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF} (Chuẩn hệ thống doanh nghiệp AD)..."
+    msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF} (Chuẩn hệ thống doanh nghiệp AD - Hoàn toàn động qua DNS)..."
     
     cat > "$SSSD_CONF" <<EOF
 [sssd]
@@ -114,7 +107,6 @@ config_file_version = 2
 services = nss, pam
 
 [domain/${domain}]
-$([[ -n "$ad_server_line" ]] && echo "$ad_server_line")
 dyndns_update = True
 dyndns_refresh_interval = 14400
 dyndns_update_ptr = True
@@ -189,17 +181,16 @@ set_gpo_permissive() {
         sed -i '/\[domain\/.*\]/a ad_gpo_access_control = permissive' "$SSSD_CONF"
     fi
 
-    # 2. Khắc phục lỗi SSSD Offline: Xóa bỏ hoàn toàn các dòng ad_server và dyndns_server gán IP thô
-    # Để SSSD dùng cơ chế DNS Service Discovery chuẩn Active Directory như máy mẫu
+    # 2. Khắc phục lỗi SSSD Offline: Xóa bỏ hoàn toàn các dòng ad_server và dyndns_server gán cố định
+    # Để SSSD hoàn toàn tự động tìm kiếm DC & Global Catalog qua DNS SRV chuẩn Active Directory
     sed -i '/^[[:space:]]*ad_server[[:space:]]*=/d' "$SSSD_CONF"
     sed -i '/^[[:space:]]*dyndns_server[[:space:]]*=/d' "$SSSD_CONF"
     sed -i 's/services = nss, pam, ssh/services = nss, pam/' "$SSSD_CONF" 2>/dev/null || true
 
-    local preferred_dc=""
-    prompt_with_default "Tên FQDN Domain Controller ưu tiên kết nối (ví dụ: GL-RODC1.bestpacific.com - Enter để tự động)" "" preferred_dc
-    if [[ -n "$preferred_dc" ]]; then
-        sed -i "/\[domain\/.*\]/a ad_server = ${preferred_dc}" "$SSSD_CONF"
-        msg_ok "Đã ghim Domain Controller ưu tiên: ${preferred_dc}"
+    # Đảm bảo Kerberos tự động tìm kiếm KDC qua DNS
+    if [[ -f /etc/krb5.conf ]]; then
+        sed -i 's/dns_lookup_kdc = false/dns_lookup_kdc = true/' /etc/krb5.conf 2>/dev/null || true
+        sed -i 's/dns_lookup_realm = false/dns_lookup_realm = true/' /etc/krb5.conf 2>/dev/null || true
     fi
 
     chmod 600 "$SSSD_CONF"
