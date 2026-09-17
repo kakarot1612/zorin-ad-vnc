@@ -97,6 +97,17 @@ configure_sssd() {
         msg_ok "Đang thiết lập GPO ở chế độ Permissive (Cho phép AD user đăng nhập bình thường)."
     fi
 
+    # Phát hiện chính xác tài khoản máy tính trong keytab để gán ldap_sasl_authid (khắc phục lỗi hoa/thường)
+    local keytab_principal=""
+    if [[ -f /etc/krb5.keytab ]]; then
+        keytab_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -i '\$' | head -n 1 | awk '{print $2}' | cut -d@ -f1)
+    fi
+    local sasl_authid_line=""
+    if [[ -n "$keytab_principal" ]]; then
+        sasl_authid_line="ldap_sasl_authid = ${keytab_principal}"
+        msg_ok "Phát hiện tài khoản máy tính trong keytab: ${keytab_principal}"
+    fi
+
     # Check if domain section exists or build a clean configuration matching proven working setup
     msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF} (Chuẩn hệ thống doanh nghiệp AD - Hoàn toàn động qua DNS)..."
     
@@ -107,6 +118,7 @@ config_file_version = 2
 services = nss, pam
 
 [domain/${domain}]
+$([[ -n "$sasl_authid_line" ]] && echo "$sasl_authid_line")
 dyndns_update = True
 dyndns_refresh_interval = 14400
 dyndns_update_ptr = True
@@ -287,6 +299,17 @@ set_gpo_permissive() {
 
     # 3. Đồng bộ chuẩn cấu hình Kerberos /etc/krb5.conf (Khóa KDC cục bộ, tắt dns_lookup_kdc)
     configure_krb5_conf
+
+    # 4. Khắc phục lỗi lệch chữ hoa/thường giữa SSSD và Keytab:
+    local keytab_principal=""
+    if [[ -f /etc/krb5.keytab ]]; then
+        keytab_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -i '\$' | head -n 1 | awk '{print $2}' | cut -d@ -f1)
+    fi
+    if [[ -n "$keytab_principal" ]]; then
+        sed -i '/^[[:space:]]*ldap_sasl_authid[[:space:]]*=/d' "$SSSD_CONF"
+        sed -i "/\[domain\/.*\]/a ldap_sasl_authid = ${keytab_principal}" "$SSSD_CONF"
+        msg_ok "Đã cấu hình ldap_sasl_authid = ${keytab_principal} khớp chính xác với keytab."
+    fi
 
     chmod 600 "$SSSD_CONF"
     chown root:root "$SSSD_CONF"
