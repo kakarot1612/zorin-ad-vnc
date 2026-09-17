@@ -166,7 +166,13 @@ install_vnc_systemd_service() {
     chmod 755 "/usr/local/bin/zorin-x11vnc-daemon.sh"
     msg_ok "Đã cài đặt Daemon phát hiện phiên đăng nhập: /usr/local/bin/zorin-x11vnc-daemon.sh"
 
-    # 6. Tạo systemd service cho Zorin OS Dynamic X11VNC Session Daemon (chuẩn máy mẫu)
+    # 6. Dọn dẹp triệt để service cũ và symlink cũ trước khi tạo mới
+    systemctl stop x11vnc.service 2>/dev/null || true
+    systemctl disable x11vnc.service 2>/dev/null || true
+    systemctl stop zorin-x11vnc.service 2>/dev/null || true
+    rm -f /etc/systemd/system/zorin-x11vnc.service /etc/systemd/system/x11vnc.service 2>/dev/null || true
+
+    # Tạo systemd service cho Zorin OS Dynamic X11VNC Session Daemon (chuẩn máy mẫu)
     local unit_file="/etc/systemd/system/zorin-x11vnc.service"
     cat > "$unit_file" <<EOF
 [Unit]
@@ -187,11 +193,6 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    # Dừng service x11vnc tĩnh cũ để tránh xung đột cổng 5900
-    systemctl stop x11vnc.service 2>/dev/null || true
-    systemctl disable x11vnc.service 2>/dev/null || true
-    rm -f /etc/systemd/system/x11vnc.service 2>/dev/null || true
 
     systemctl daemon-reload
     systemctl enable zorin-x11vnc.service 2>/dev/null || true
