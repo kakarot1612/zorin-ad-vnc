@@ -140,6 +140,9 @@ EOF
         msg_ok "Đã đảm bảo /etc/nsswitch.conf kích hoạt phân giải SSSD."
     fi
 
+    # Đồng bộ /etc/krb5.conf chuẩn khóa KDC cục bộ
+    configure_krb5_conf "$domain" "$dc1" "$dc2"
+
     # Clear SSSD cache and restart service
     msg_info "Đang xóa SSSD cache và khởi động lại dịch vụ SSSD..."
     if command -v sss_cache >/dev/null 2>&1; then
@@ -160,6 +163,101 @@ EOF
         sssctl domain-status "$domain" 2>/dev/null || true
     fi
 
+    return 0
+}
+
+configure_krb5_conf() {
+    check_root
+    msg_step "CẤU HÌNH KERBEROS KDC CỤC BỘ (/etc/krb5.conf)"
+
+    local krb_domain="${1:-}"
+    local krb_dc1="${2:-}"
+    local krb_dc2="${3:-}"
+    local krb_admin="${4:-}"
+
+    if [[ -f /etc/zorin-ad-vnc/ad_dc.conf ]]; then
+        # shellcheck disable=SC1091
+        source /etc/zorin-ad-vnc/ad_dc.conf
+        krb_domain="${krb_domain:-${DOMAIN}}"
+        krb_dc1="${krb_dc1:-${DC1}}"
+        krb_dc2="${krb_dc2:-${DC2}}"
+        krb_admin="${krb_admin:-${ADMIN_SERVER}}"
+    fi
+    krb_domain="${krb_domain:-${AD_DOMAIN}}"
+    krb_domain="${krb_domain:-$(grep -E '^[[:space:]]*domains[[:space:]]*=' "$SSSD_CONF" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d '[:space:]')}"
+    krb_dc1="${krb_dc1:-${AD_DC1}}"
+    krb_dc2="${krb_dc2:-${AD_DC2}}"
+    krb_admin="${krb_admin:-${AD_ADMIN_SERVER}}"
+
+    if [[ -z "$krb_domain" ]]; then
+        prompt_with_default "Tên Active Directory Domain" "" krb_domain
+    fi
+    if [[ -z "$krb_dc1" ]]; then
+        prompt_with_default "IP / FQDN của Domain Controller chính (KDC 1)" "" krb_dc1
+    fi
+    if [[ -z "$krb_dc2" ]]; then
+        prompt_with_default "IP / FQDN của Domain Controller phụ (KDC 2 - Enter nếu không có)" "" krb_dc2
+    fi
+    if [[ -z "$krb_admin" ]]; then
+        prompt_with_default "IP / FQDN của Admin Server (Enter để dùng KDC 1)" "${krb_dc1}" krb_admin
+    fi
+
+    if [[ -z "$krb_domain" || -z "$krb_dc1" ]]; then
+        msg_err "Thiếu thông tin Domain hoặc Domain Controller để cấu hình /etc/krb5.conf."
+        return 1
+    fi
+
+    # 1. Sao lưu cấu hình /etc/krb5.conf hiện tại
+    if [[ -f /etc/krb5.conf ]]; then
+        local ts_bak
+        ts_bak=$(date +%Y%m%d-%H%M%S)
+        cp -a /etc/krb5.conf "/etc/krb5.conf.bak.${ts_bak}" 2>/dev/null || true
+        backup_file "/etc/krb5.conf" "krb5"
+        msg_ok "Đã sao lưu /etc/krb5.conf -> /etc/krb5.conf.bak.${ts_bak}"
+    fi
+
+    # 2. Ghi đè file cấu hình /etc/krb5.conf chuẩn khóa KDC cục bộ, tắt DNS discovery
+    cat > /etc/krb5.conf <<EOF
+[libdefaults]
+    default_realm = ${krb_domain^^}
+    dns_lookup_realm = false
+    dns_lookup_kdc = false
+    ticket_lifetime = 24h
+    renew_lifetime = 7d
+    forwardable = true
+    rdns = false
+
+[realms]
+    ${krb_domain^^} = {
+        kdc = ${krb_dc1}
+$([[ -n "$krb_dc2" && "$krb_dc2" != "$krb_dc1" ]] && echo "        kdc = ${krb_dc2}")
+        admin_server = ${krb_admin:-$krb_dc1}
+        default_domain = ${krb_domain,,}
+    }
+
+[domain_realm]
+    .${krb_domain,,} = ${krb_domain^^}
+    ${krb_domain,,} = ${krb_domain^^}
+EOF
+
+    chmod 644 /etc/krb5.conf
+    msg_ok "Đã cấu hình chuẩn /etc/krb5.conf:"
+    msg_ok "  Realm: ${krb_domain^^}"
+    msg_ok "  KDC 1: ${krb_dc1}"
+    [[ -n "$krb_dc2" && "$krb_dc2" != "$krb_dc1" ]] && msg_ok "  KDC 2: ${krb_dc2}"
+    msg_ok "  Admin Server: ${krb_admin:-$krb_dc1}"
+
+    # Cập nhật / lưu lại cấu hình DC cục bộ vào /etc/zorin-ad-vnc/ad_dc.conf
+    mkdir -p /etc/zorin-ad-vnc
+    cat > /etc/zorin-ad-vnc/ad_dc.conf <<EOF
+DOMAIN=${krb_domain}
+DC1=${krb_dc1}
+DC2=${krb_dc2}
+ADMIN_SERVER=${krb_admin:-$krb_dc1}
+EOF
+    chmod 600 /etc/zorin-ad-vnc/ad_dc.conf 2>/dev/null || true
+
+    log_message "CONFIG" "Configured /etc/krb5.conf for realm ${krb_domain^^} with KDCs ${krb_dc1} ${krb_dc2}"
     return 0
 }
 
@@ -187,11 +285,8 @@ set_gpo_permissive() {
     sed -i '/^[[:space:]]*dyndns_server[[:space:]]*=/d' "$SSSD_CONF"
     sed -i 's/services = nss, pam, ssh/services = nss, pam/' "$SSSD_CONF" 2>/dev/null || true
 
-    # Đảm bảo Kerberos tự động tìm kiếm KDC qua DNS
-    if [[ -f /etc/krb5.conf ]]; then
-        sed -i 's/dns_lookup_kdc = false/dns_lookup_kdc = true/' /etc/krb5.conf 2>/dev/null || true
-        sed -i 's/dns_lookup_realm = false/dns_lookup_realm = true/' /etc/krb5.conf 2>/dev/null || true
-    fi
+    # 3. Đồng bộ chuẩn cấu hình Kerberos /etc/krb5.conf (Khóa KDC cục bộ, tắt dns_lookup_kdc)
+    configure_krb5_conf
 
     chmod 600 "$SSSD_CONF"
     chown root:root "$SSSD_CONF"

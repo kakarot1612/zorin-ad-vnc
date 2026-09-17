@@ -301,17 +301,19 @@ main_menu() {
             4)  join_active_directory; press_enter_to_continue ;;
             5)
                 echo -e "\n${C_CYAN}--- CẤU HÌNH XÁC THỰC SSSD & SỬA LỖI ĐĂNG NHẬP ACTIVE DIRECTORY ---${C_RESET}"
-                echo "1) Bật AD GPO Permissive (Sửa lỗi AD user không đăng nhập được máy - Khuyên dùng)"
-                echo "2) Cấu hình SSSD toàn diện (Ghim Domain Controller, Tên miền & Tạo sssd.conf)"
-                echo "3) Cấu hình PAM tự động tạo thư mục Home cho User AD (pam_mkhomedir)"
-                echo "4) Thay đổi linh hoạt chế độ GPO (Permissive / Enforcing)"
+                echo "1) Bật AD GPO Permissive & Cấu hình Kerberos KDC cục bộ (Khuyên dùng)"
+                echo "2) Cấu hình Kerberos KDC cục bộ (/etc/krb5.conf)"
+                echo "3) Cấu hình SSSD toàn diện (sssd.conf & krb5.conf)"
+                echo "4) Cấu hình PAM tự động tạo thư mục Home cho User AD (pam_mkhomedir)"
+                echo "5) Thay đổi linh hoạt chế độ GPO (Permissive / Enforcing)"
                 local sssd_opt
-                prompt_with_default "Lựa chọn [1-4]" "1" sssd_opt
+                prompt_with_default "Lựa chọn [1-5]" "1" sssd_opt
                 case "$sssd_opt" in
                     1) set_gpo_permissive ;;
-                    2) configure_sssd; configure_pam_mkhomedir ;;
-                    3) configure_pam_mkhomedir ;;
-                    4) toggle_gpo_mode ;;
+                    2) configure_krb5_conf ;;
+                    3) configure_sssd; configure_pam_mkhomedir ;;
+                    4) configure_pam_mkhomedir ;;
+                    5) toggle_gpo_mode ;;
                 esac
                 press_enter_to_continue
                 ;;
@@ -362,7 +364,8 @@ show_help() {
     echo "  --status              Xem trạng thái AD và x11vnc"
     echo "  --auto-setup          Chạy toàn bộ quy trình thiết lập tự động"
     echo "  --repair [username]   Sửa lỗi quyền Home Directory cho user"
-    echo "  --register-dns        Đăng ký bản ghi tên máy lên Windows AD DNS & NetBIOS"
+    echo "  --fix-gpo             Bật AD GPO Permissive & Khóa KDC cục bộ"
+    echo "  --fix-krb5            Cấu hình /etc/krb5.conf khóa Domain Controller cục bộ"
     echo "  --toggle-gpo          Chuyển đổi chế độ AD GPO Enforcing / Permissive"
     echo "  --share               Mở menu quản lý Thư mục chia sẻ mạng (SMB/CIFS)"
     echo "  --printer             Mở menu quản lý Máy in chia sẻ qua mạng"
@@ -403,6 +406,10 @@ else
         --fix-gpo|--gpo-permissive)
             check_root
             set_gpo_permissive
+            ;;
+        --fix-krb5)
+            check_root
+            configure_krb5_conf "$2" "$3" "$4" "$5"
             ;;
         --toggle-gpo)
             check_root

@@ -10,6 +10,8 @@ LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$LIB_DIR/common.sh"
 # shellcheck source=lib/check_dns.sh
 source "$LIB_DIR/check_dns.sh"
+# shellcheck source=lib/sssd_config.sh
+[[ -f "$LIB_DIR/sssd_config.sh" ]] && source "$LIB_DIR/sssd_config.sh"
 
 REQUIRED_PACKAGES=(
     realmd
@@ -194,22 +196,10 @@ EOF
         dc_fqdn="$dc1"
     fi
 
-    # 7. Pre-configure /etc/krb5.conf to PIN KDC strictly to DC FQDN
+    # 7. Pre-configure /etc/krb5.conf to PIN KDC strictly to local DCs
     # Setting rdns = false prevents Kerberos from reversing DC IP to an unmapped SPN
-    msg_info "Ghim cấu hình Kerberos KDC trực tiếp vào Domain Controller [${dc_fqdn}]..."
-    cat > /etc/krb5.conf <<EOF
-[libdefaults]
-    default_realm = ${domain^^}
-    dns_lookup_realm = true
-    dns_lookup_kdc = true
-    ticket_lifetime = 24h
-    renew_lifetime = 7d
-    forwardable = true
-
-[domain_realm]
-    .${domain,,} = ${domain^^}
-    ${domain,,} = ${domain^^}
-EOF
+    msg_info "Ghim cấu hình Kerberos KDC trực tiếp vào Domain Controller [${dc1}]..."
+    configure_krb5_conf "$domain" "$dc1" "$dc2"
 
     # 8. Update /etc/resolv.conf and /etc/hosts with local DC
     if [[ -f /etc/resolv.conf ]] && ! grep -q "^nameserver[[:space:]]*${dc1}" /etc/resolv.conf; then
