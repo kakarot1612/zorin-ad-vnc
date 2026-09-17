@@ -7,6 +7,7 @@
 #              Xorg desktop session.
 # ==============================================================================
 
+export HOME="/root"
 DAEMON_LOG="/var/log/zorin-x11vnc.log"
 CONFIG_FILE="/etc/x11vnc/zorin-vnc.conf"
 PASSWD_FILE="/etc/x11vnc/vncpwd"
@@ -73,7 +74,15 @@ find_xauthority() {
     local user="$2"
     local auth=""
 
-    # 1. Extract directly from active Xorg process arguments
+    # 1. Inspect /proc/*/environ of active GUI sessions (direct ground truth)
+    local proc_auth
+    proc_auth=$(grep -s -z -h '^XAUTHORITY=' /proc/[0-9]*/environ 2>/dev/null | tr '\0' '\n' | grep '^XAUTHORITY=' | head -n 1 | cut -d= -f2-)
+    if [[ -n "$proc_auth" && -f "$proc_auth" ]]; then
+        echo "$proc_auth"
+        return 0
+    fi
+
+    # 2. Extract directly from active Xorg process arguments
     local extracted
     extracted=$(ps -eo args 2>/dev/null | grep -E '[X]org' | grep -o -E -- '-auth[ =][^ ]+' | awk '{print $2}' | head -n 1)
     if [[ -n "$extracted" && -f "$extracted" ]]; then
@@ -81,7 +90,7 @@ find_xauthority() {
         return 0
     fi
 
-    # 2. Check user runtime directory
+    # 3. Check user runtime directory
     if [[ -n "$uid" ]]; then
         for f in "/run/user/${uid}/gdm/Xauthority" "/run/user/${uid}/.Xauthority"; do
             if [[ -f "$f" ]]; then
@@ -97,7 +106,7 @@ find_xauthority() {
         done
     fi
 
-    # 3. Check GDM greeter / system locations
+    # 4. Check GDM greeter / system locations
     for f in /var/lib/gdm3/.Xauthority /run/gdm3/*/database /var/run/gdm3/*/database /run/user/*/gdm/Xauthority; do
         if [[ -f "$f" ]]; then
             echo "$f"
@@ -105,7 +114,7 @@ find_xauthority() {
         fi
     done
 
-    # 4. Check user home directory
+    # 5. Check user home directory
     if [[ -n "$user" ]]; then
         local user_home
         user_home=$(getent passwd "$user" | cut -d: -f6)
@@ -121,6 +130,16 @@ find_xauthority() {
 find_display() {
     local sid="$1"
     local disp=""
+
+    # 1. From active GUI process environment
+    local proc_disp
+    proc_disp=$(grep -s -z -h '^DISPLAY=:' /proc/[0-9]*/environ 2>/dev/null | tr '\0' '\n' | grep '^DISPLAY=:' | head -n 1 | cut -d= -f2-)
+    if [[ -n "$proc_disp" ]]; then
+        echo "$proc_disp"
+        return 0
+    fi
+
+    # 2. From loginctl
     if [[ -n "$sid" ]]; then
         disp=$(loginctl show-session "$sid" -p Display --value 2>/dev/null)
     fi
@@ -129,7 +148,7 @@ find_display() {
         return 0
     fi
 
-    # Check /tmp/.X11-unix active sockets
+    # 3. Check /tmp/.X11-unix active sockets
     local socket
     socket=$(ls /tmp/.X11-unix/X* 2>/dev/null | head -n 1)
     if [[ -n "$socket" ]]; then
@@ -138,7 +157,7 @@ find_display() {
         return 0
     fi
 
-    # Check Xorg processes
+    # 4. Check Xorg processes
     local xorg_disp
     xorg_disp=$(ps -eo args 2>/dev/null | grep -E '[X]org' | grep -o -E ':[0-9]+' | head -n 1)
     if [[ -n "$xorg_disp" ]]; then

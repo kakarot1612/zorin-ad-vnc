@@ -51,6 +51,18 @@ cp "$INSTALL_DIR/lib/x11vnc_session_daemon.sh" "$DAEMON_PATH"
 chmod +x "$DAEMON_PATH"
 echo -e "\033[0;32m[✓ OK]\033[0m Đã cài đặt daemon script vào: $DAEMON_PATH"
 
+# 4.1 Ensure GDM uses Xorg instead of Wayland for x11vnc
+for gdm_conf in /etc/gdm3/custom.conf /etc/gdm/custom.conf; do
+    if [[ -f "$gdm_conf" ]]; then
+        if grep -q -E "^#?[[:space:]]*WaylandEnable=" "$gdm_conf"; then
+            sed -i -E 's/^#?[[:space:]]*WaylandEnable=.*/WaylandEnable=false/' "$gdm_conf"
+        else
+            sed -i '/\[daemon\]/a WaylandEnable=false' "$gdm_conf" 2>/dev/null || echo -e "\n[daemon]\nWaylandEnable=false" >> "$gdm_conf"
+        fi
+        echo -e "\033[0;32m[✓ OK]\033[0m Đã cấu hình GDM ép Xorg (WaylandEnable=false): $gdm_conf"
+    fi
+done
+
 # 5. Install systemd service & alias symlink
 cp "$INSTALL_DIR/systemd/zorin-x11vnc.service" "$SERVICE_PATH"
 ln -sf "$SERVICE_PATH" /etc/systemd/system/x11vnc.service
