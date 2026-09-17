@@ -59,8 +59,27 @@ configure_sssd() {
     prompt_with_default "IP Domain Controller phụ (Site cục bộ - Enter để bỏ qua)" "$dc2" dc2
     dc2=$(echo "$dc2" | tr -d '[:space:]')
 
-    local ad_servers="$dc1"
-    [[ -n "$dc2" ]] && ad_servers="${dc1}, ${dc2}"
+    # Determine Domain Controller FQDN / DNS SRV Auto-Discovery
+    # IMPORTANT: Never put raw IP addresses in ad_server, because Kerberos SPN requires FQDN!
+    # Using raw IP causes Kerberos ticket mismatch and puts SSSD into 'Offline' mode.
+    local ad_servers="_srv_"
+    local dc1_fqdn=""
+    if [[ -n "$dc1" ]]; then
+        if command -v dig >/dev/null 2>&1; then
+            dc1_fqdn=$(dig -x "$dc1" +short 2>/dev/null | sed 's/\.$//' | head -n 1)
+        fi
+        if [[ -z "$dc1_fqdn" ]] && command -v getent >/dev/null 2>&1; then
+            dc1_fqdn=$(getent hosts "$dc1" 2>/dev/null | awk '{print $2}' | head -n 1)
+        fi
+    fi
+
+    if [[ -n "$dc1_fqdn" && "$dc1_fqdn" != "$dc1" ]]; then
+        ad_servers="${dc1_fqdn}, _srv_"
+        msg_ok "Đã phân giải FQDN cho Domain Controller: ${dc1_fqdn}"
+    else
+        ad_servers="_srv_"
+        msg_info "Sử dụng cơ chế tự động tìm kiếm DC qua AD DNS SRV (ad_server = _srv_)"
+    fi
 
     # GPO Mode option (Default to Permissive for Linux workstations in AD)
     echo ""
@@ -79,7 +98,7 @@ configure_sssd() {
     fi
 
     # Check if domain section exists or build a clean configuration
-    msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF} (Ghim DC: ${ad_servers})..."
+    msg_info "Đang cập nhật cấu hình vào ${SSSD_CONF} (AD Server: ${ad_servers})..."
     
     cat > "$SSSD_CONF" <<EOF
 [sssd]
@@ -93,7 +112,7 @@ access_provider = ad
 auth_provider = ad
 chpass_provider = ad
 
-# Ghim cứng Domain Controller cục bộ để ngăn chặn kết nối tới DC ngoài site
+# Tự động tìm kiếm Domain Controller & Global Catalog qua DNS SRV bằng FQDN (Bắt buộc cho Kerberos)
 ad_server = ${ad_servers}
 ad_domain = ${domain}
 krb5_realm = ${domain^^}
@@ -168,10 +187,19 @@ set_gpo_permissive() {
 
     backup_file "$SSSD_CONF" "sssd-gpo-permissive"
 
+    # 1. Bật GPO Permissive để tránh bị GPO chặn pam_acct_mgmt
     if grep -q "ad_gpo_access_control" "$SSSD_CONF"; then
         sed -i 's/^[[:space:]]*ad_gpo_access_control[[:space:]]*=.*/ad_gpo_access_control = permissive/' "$SSSD_CONF"
     else
         sed -i '/\[domain\/.*\]/a ad_gpo_access_control = permissive' "$SSSD_CONF"
+    fi
+
+    # 2. Khắc phục lỗi SSSD Offline: Thay thế IP thô trong ad_server bằng DNS SRV Auto-discovery (_srv_)
+    # Kerberos và LDAP bắt buộc dùng FQDN tên máy, dùng IP sẽ khiến Kerberos SPN thất bại và SSSD bị Offline
+    if grep -q -E "^[[:space:]]*ad_server[[:space:]]*=[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+" "$SSSD_CONF"; then
+        msg_info "Phát hiện ad_server đang gán bằng IP thô (nguyên nhân khiến Kerberos SPN lỗi & SSSD Offline)."
+        msg_info "Đang chuyển sang cơ chế DNS Service Discovery FQDN (ad_server = _srv_)..."
+        sed -i 's/^[[:space:]]*ad_server[[:space:]]*=.*/ad_server = _srv_/' "$SSSD_CONF"
     fi
 
     chmod 600 "$SSSD_CONF"
@@ -182,11 +210,21 @@ set_gpo_permissive() {
         sss_cache -E 2>/dev/null || true
     fi
     systemctl restart sssd
+    sleep 2
 
     if systemctl is-active --quiet sssd; then
         msg_ok "Đã cấu hình thành công: ad_gpo_access_control = permissive"
         msg_ok "Dịch vụ SSSD đang hoạt động [ACTIVE]."
         
+        # In trạng thái domain status sau khi sửa
+        local current_domain
+        current_domain=$(grep -E '^[[:space:]]*domains[[:space:]]*=' "$SSSD_CONF" | head -n 1 | cut -d= -f2- | tr -d '[:space:]')
+        if [[ -n "$current_domain" ]] && command -v sssctl >/dev/null 2>&1; then
+            echo -e "\n${C_BOLD}${C_CYAN}=== KIỂM TRA TRẠNG THÁI DOMAIN SSSD (sssctl domain-status) ===${C_RESET}"
+            sssctl domain-status "$current_domain" || true
+            echo -e "${C_BOLD}${C_CYAN}===============================================================${C_RESET}\n"
+        fi
+
         local check_user=""
         prompt_with_default "Nhập tên tài khoản AD để kiểm tra quyền đăng nhập (Enter để bỏ qua)" "" check_user
         if [[ -n "$check_user" ]] && command -v sssctl >/dev/null 2>&1; then
