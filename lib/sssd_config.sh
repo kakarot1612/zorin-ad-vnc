@@ -155,6 +155,21 @@ EOF
     # Đồng bộ /etc/krb5.conf chuẩn khóa KDC cục bộ
     configure_krb5_conf "$domain" "$dc1" "$dc2"
 
+    # NetworkManager Dispatcher Hook tự động cập nhật AD DNS khi nhận IP mới từ DHCP
+    mkdir -p /etc/NetworkManager/dispatcher.d 2>/dev/null || true
+    cat > /etc/NetworkManager/dispatcher.d/99-ad-dns-update.sh <<'EOF'
+#!/bin/bash
+# Automatically trigger SSSD dynamic DNS update on network up / DHCP change
+ACTION="$2"
+if [[ "$ACTION" == "up" || "$ACTION" == "dhcp4-change" ]]; then
+    if systemctl is-active --quiet sssd; then
+        systemctl restart sssd >/dev/null 2>&1 &
+    fi
+fi
+EOF
+    chmod 755 /etc/NetworkManager/dispatcher.d/99-ad-dns-update.sh 2>/dev/null || true
+    msg_ok "Đã cấu hình NetworkManager hook tự động cập nhật DNS khi đổi DHCP IP."
+
     # Clear SSSD cache and restart service
     msg_info "Đang xóa SSSD cache và khởi động lại dịch vụ SSSD..."
     if command -v sss_cache >/dev/null 2>&1; then

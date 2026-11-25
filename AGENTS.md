@@ -47,3 +47,17 @@
 - **Phân quyền mật khẩu VNC:** File `/etc/x11vnc/vncpwd` và `/etc/x11vnc/passwd` phải có quyền `644`, thư mục `/etc/x11vnc` quyền `755` để mọi tài khoản người dùng khi logon vào đều đọc được mật khẩu kết nối.
 - **Quản lý dịch vụ tập trung:** Sử dụng duy nhất service `zorin-x11vnc.service` để quản trị `/usr/local/bin/zorin-x11vnc-daemon.sh`. Tuyệt đối không để tồn tại service tĩnh `x11vnc.service` gán cứng một user gây xung đột cổng 5900.
 
+### E. Quy Chuẩn Dynamic DNS (DDNS) Khi Thay Đổi IP DHCP Trên Linux
+- **Bản chất vấn đề:** Khác với Windows Client tự động cập nhật bản ghi DNS (Option 81 FQDN) lên Active Directory DNS Server, Linux DHCP client mặc định chỉ xin IP mà không tự cập nhật DNS. SSSD có tính năng `dyndns_update = True`, nhưng chỉ kích hoạt khi service khởi động hoặc theo chu kỳ `dyndns_refresh_interval` (thường là 4 tiếng). Do đó, khi máy Linux nhận DHCP IP mới, bản ghi A record trên AD DNS Server vẫn trỏ về IP cũ, khiến các máy khác trong domain không thể ping tên máy.
+- **Giải pháp bắt buộc:**
+  1. Trong `sssd.conf` luôn bật:
+     ```ini
+     dyndns_update = True
+     dyndns_refresh_interval = 14400
+     dyndns_update_ptr = True
+     dyndns_ttl = 3600
+     ```
+  2. Cài đặt NetworkManager Dispatcher Hook (`/etc/NetworkManager/dispatcher.d/99-ad-dns-update.sh`) bắt các sự kiện `up` và `dhcp4-change` để tự động restart SSSD. Khi SSSD restart, nó lập tức dùng vé Kerberos của máy (`machine$`) để gửi bản tin `nsupdate` (RFC 2136 GSS-TSIG) cập nhật ngay IP mới lên AD DNS.
+  3. Cung cấp tùy chọn cấu hình NetBIOS (`nmbd`) và LLMNR để máy tính Windows có thể phân giải trực tiếp tên máy Zorin OS qua broadcast/multicast ngay cả khi DNS cache chưa kịp làm mới.
+
+
