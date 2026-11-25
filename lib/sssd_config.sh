@@ -527,7 +527,9 @@ EOF
     fi
 
     if [[ -f /etc/krb5.keytab ]] && command -v nsupdate >/dev/null 2>&1; then
-        local machine_principal="${current_host^^}\$@${domain^^}"
+        local machine_principal
+        machine_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -i '\$' | head -n 1 | awk '{print $2}')
+        [[ -z "$machine_principal" ]] && machine_principal="${current_host^^}\$@${domain^^}"
         # Obtain Kerberos ticket for machine account
         kinit -k "$machine_principal" 2>/dev/null || true
 
