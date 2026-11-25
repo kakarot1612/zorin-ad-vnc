@@ -100,7 +100,7 @@ configure_sssd() {
     # Phát hiện chính xác tài khoản máy tính trong keytab để gán ldap_sasl_authid (khắc phục lỗi hoa/thường)
     local keytab_principal=""
     if [[ -f /etc/krb5.keytab ]]; then
-        keytab_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -i '\$' | head -n 1 | awk '{print $2}' | cut -d@ -f1)
+        keytab_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -F '$' | head -n 1 | awk '{print $2}' | cut -d@ -f1)
     fi
     local sasl_authid_line=""
     if [[ -n "$keytab_principal" ]]; then
@@ -121,7 +121,7 @@ services = nss, pam
 $([[ -n "$sasl_authid_line" ]] && echo "$sasl_authid_line")
 dyndns_update = True
 dyndns_refresh_interval = 14400
-dyndns_update_ptr = True
+dyndns_update_ptr = False
 dyndns_ttl = 3600
 ${gpo_setting}
 default_shell = /bin/bash
@@ -318,7 +318,7 @@ set_gpo_permissive() {
     # 4. Khắc phục lỗi lệch chữ hoa/thường giữa SSSD và Keytab:
     local keytab_principal=""
     if [[ -f /etc/krb5.keytab ]]; then
-        keytab_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -i '\$' | head -n 1 | awk '{print $2}' | cut -d@ -f1)
+        keytab_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -F '$' | head -n 1 | awk '{print $2}' | cut -d@ -f1)
     fi
     if [[ -n "$keytab_principal" ]]; then
         sed -i '/^[[:space:]]*ldap_sasl_authid[[:space:]]*=/d' "$SSSD_CONF"
@@ -470,7 +470,7 @@ register_ad_dns_and_netbios() {
     if [[ -f "$SSSD_CONF" ]]; then
         msg_info "1. Bật tính năng Dynamic DNS (dyndns_update) trong SSSD với DC cục bộ [${local_dc}]..."
         if ! grep -q "dyndns_update" "$SSSD_CONF"; then
-            sed -i "/\[domain\/${domain}\]/a dyndns_update = True\ndyndns_server = ${local_dc}\ndyndns_refresh_interval = 14400\ndyndns_update_ptr = True\ndyndns_ttl = 3600" "$SSSD_CONF" 2>/dev/null || true
+            sed -i "/\[domain\/${domain}\]/a dyndns_update = True\ndyndns_server = ${local_dc}\ndyndns_refresh_interval = 14400\ndyndns_update_ptr = False\ndyndns_ttl = 3600" "$SSSD_CONF" 2>/dev/null || true
         else
             sed -i "s/dyndns_update = .*/dyndns_update = True/" "$SSSD_CONF" 2>/dev/null || true
             if ! grep -q "dyndns_server" "$SSSD_CONF"; then
@@ -528,7 +528,7 @@ EOF
 
     if [[ -f /etc/krb5.keytab ]] && command -v nsupdate >/dev/null 2>&1; then
         local machine_principal
-        machine_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -i '\$' | head -n 1 | awk '{print $2}')
+        machine_principal=$(klist -k /etc/krb5.keytab 2>/dev/null | grep -F '$' | head -n 1 | awk '{print $2}')
         [[ -z "$machine_principal" ]] && machine_principal="${current_host^^}\$@${domain^^}"
         # Obtain Kerberos ticket for machine account
         kinit -k "$machine_principal" 2>/dev/null || true
